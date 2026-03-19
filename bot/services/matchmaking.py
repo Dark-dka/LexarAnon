@@ -20,20 +20,16 @@ class MatchmakingService:
         self._queue: list[int] = []  # telegram_ids waiting
         self._lock = asyncio.Lock()
         self._active_chats: dict[int, int] = {}  # telegram_id -> chat_session_id
+        self._user_prefs: dict[int, tuple] = {}  # telegram_id -> (gender, search_gender)
 
     async def _get_user(self, telegram_id: int) -> TelegramUser:
         return await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
 
-    async def _is_gender_match(self, user1_tid: int, user2_tid: int) -> bool:
-        """Check if two users match each other's gender preferences."""
-        user1 = await self._get_user(user1_tid)
-        user2 = await self._get_user(user2_tid)
-
-        # User1 wants user2's gender?
-        if user1.search_gender and user2.gender != user1.search_gender:
+    def _is_gender_match(self, u1_gender, u1_search, u2_gender, u2_search) -> bool:
+        """In-memory gender compatibility check using cached prefs."""
+        if u1_search and u2_gender != u1_search:
             return False
-        # User2 wants user1's gender?
-        if user2.search_gender and user1.gender != user2.search_gender:
+        if u2_search and u1_gender != u2_search:
             return False
         return True
 
@@ -41,48 +37,61 @@ class MatchmakingService:
         """
         Add user to queue. If a matching partner is available, pair them.
         Returns (partner_user, chat_session) if matched, None if queued.
+
+        DB operations are done OUTSIDE the lock to avoid blocking remove_from_queue.
         """
+        # Fetch user data before acquiring lock — no blocking inside lock
+        user = await self._get_user(telegram_id)
+
+        partner_tid: Optional[int] = None
         async with self._lock:
-            if telegram_id in self._queue:
-                return None
-            if telegram_id in self._active_chats:
+            if telegram_id in self._queue or telegram_id in self._active_chats:
                 return None
 
-            # Try to find a compatible partner
-            for i, partner_tid in enumerate(self._queue):
-                if await self._is_gender_match(telegram_id, partner_tid):
-                    # Found a match!
+            # Cache preferences for fast in-memory matching
+            self._user_prefs[telegram_id] = (user.gender, user.search_gender)
+
+            # Find a compatible partner using in-memory cache (no DB calls)
+            for i, candidate_tid in enumerate(self._queue):
+                c_gender, c_search = self._user_prefs.get(candidate_tid, (None, None))
+                if self._is_gender_match(user.gender, user.search_gender, c_gender, c_search):
                     self._queue.pop(i)
+                    partner_tid = candidate_tid
+                    break
 
-                    user1 = await self._get_user(partner_tid)
-                    user2 = await self._get_user(telegram_id)
+            if partner_tid is None:
+                self._queue.append(telegram_id)
+                logger.info(f'User {telegram_id} added to queue. Queue size: {len(self._queue)}')
+                return None
 
-                    session = await sync_to_async(ChatSession.objects.create)(
-                        user1=user1,
-                        user2=user2,
-                        status=ChatSession.Status.ACTIVE,
-                    )
+        # --- Outside lock: DB-heavy operations ---
+        assert partner_tid is not None
+        user1 = await self._get_user(partner_tid)
+        user2 = user  # already fetched above
 
-                    self._active_chats[partner_tid] = session.id
-                    self._active_chats[telegram_id] = session.id
+        session = await sync_to_async(ChatSession.objects.create)(
+            user1=user1,
+            user2=user2,
+            status=ChatSession.Status.ACTIVE,
+        )
 
-                    logger.info(
-                        f'Matched {partner_tid} ({user1.get_gender_display()}) '
-                        f'and {telegram_id} ({user2.get_gender_display()}) '
-                        f'in session {session.id}'
-                    )
-                    return (user1, session)
+        async with self._lock:
+            self._active_chats[partner_tid] = session.id
+            self._active_chats[telegram_id] = session.id
 
-            # No matching partner — add to queue
-            self._queue.append(telegram_id)
-            logger.info(f'User {telegram_id} added to queue. Queue size: {len(self._queue)}')
-            return None
+        logger.info(
+            f'Matched {partner_tid} ({user1.get_gender_display()}) '
+            f'and {telegram_id} ({user2.get_gender_display()}) '
+            f'in session {session.id}'
+        )
+        return (user1, session)
 
     async def remove_from_queue(self, telegram_id: int) -> bool:
         """Remove user from the waiting queue."""
         async with self._lock:
             if telegram_id in self._queue:
                 self._queue.remove(telegram_id)
+                self._user_prefs.pop(telegram_id, None)
                 logger.info(f'User {telegram_id} removed from queue.')
                 return True
             return False
@@ -141,6 +150,8 @@ class MatchmakingService:
 
             self._active_chats.pop(telegram_id, None)
             self._active_chats.pop(partner_tid, None)
+            self._user_prefs.pop(telegram_id, None)
+            self._user_prefs.pop(partner_tid, None)
 
             logger.info(f'Session {session_id} ended by {telegram_id}')
             return (partner_tid, session)
