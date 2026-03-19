@@ -5,6 +5,7 @@ from .base import *  # noqa: F401,F403
 
 DEBUG = True
 ALLOWED_HOSTS = ['*']
+CSRF_TRUSTED_ORIGINS = ['https://crm.nettech.uz', 'http://crm.nettech.uz']
 
 # SQLite for development
 DATABASES = {
