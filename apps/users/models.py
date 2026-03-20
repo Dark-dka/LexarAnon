@@ -152,3 +152,39 @@ class Rating(models.Model):
     def __str__(self):
         emoji = '👍' if self.is_like else '👎'
         return f'{emoji} {self.from_user} → {self.to_user}'
+
+
+class RequiredChannel(models.Model):
+    """A Telegram channel that users must subscribe to in order to use the bot."""
+
+    title = models.CharField(
+        max_length=255,
+        verbose_name='Название канала',
+    )
+    channel_username = models.CharField(
+        max_length=255,
+        unique=True,
+        verbose_name='Username канала',
+        help_text='Например: @mychannel (с @)',
+    )
+    invite_link = models.URLField(
+        verbose_name='Ссылка на канал',
+        help_text='https://t.me/mychannel или приватная ссылка',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name='Активен',
+        help_text='Неактивные каналы не проверяются',
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Дата добавления',
+    )
+
+    class Meta:
+        verbose_name = 'Обязательный канал'
+        verbose_name_plural = 'Обязательные каналы'
+        ordering = ['title']
+
+    def __str__(self):
+        return f'{self.title} ({self.channel_username})'

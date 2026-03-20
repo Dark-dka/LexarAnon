@@ -74,3 +74,16 @@ def rate_keyboard(session_id: int) -> InlineKeyboardMarkup:
             ],
         ],
     )
+
+
+# Subscription required keyboard — built dynamically from DB channels
+def subscribe_keyboard(channels) -> InlineKeyboardMarkup:
+    """Build an inline keyboard with a button for every required channel + a check button."""
+    rows = [
+        [InlineKeyboardButton(text=f'📢 {ch.title}', url=ch.invite_link)]
+        for ch in channels
+    ]
+    rows.append(
+        [InlineKeyboardButton(text='✅ Проверить подписку', callback_data='check_subscription')]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)

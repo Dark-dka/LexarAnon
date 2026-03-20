@@ -9,10 +9,12 @@ from aiogram.types import Message, CallbackQuery
 from asgiref.sync import sync_to_async
 
 from apps.users.models import TelegramUser, Rating
+from apps.users.models import RequiredChannel
 from bot.services.user_sync import sync_user
-from bot.keyboards import main_menu, gender_select, search_gender_select, rate_keyboard
+from bot.keyboards import main_menu, gender_select, search_gender_select, rate_keyboard, subscribe_keyboard
 from bot import texts
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -231,3 +233,43 @@ async def on_change_search(callback: CallbackQuery):
     """Re-select search preference."""
     await callback.message.edit_text(texts.SEARCH_GENDER_ASK, reply_markup=search_gender_select)
     await callback.answer()
+
+
+# ── Subscription check ───────────────────────────────────────────────────
+
+@router.callback_query(F.data == 'check_subscription')
+async def on_check_subscription(callback: CallbackQuery, bot: Bot):
+    """Re-check all active channels; let user in or prompt to subscribe."""
+    user_id = callback.from_user.id
+
+    channels = await sync_to_async(list)(
+        RequiredChannel.objects.filter(is_active=True)
+    )
+
+    not_subscribed = []
+    for channel in channels:
+        try:
+            member = await bot.get_chat_member(
+                chat_id=channel.channel_username,
+                user_id=user_id,
+            )
+            if member.status not in ('member', 'administrator', 'creator'):
+                not_subscribed.append(channel)
+        except (TelegramBadRequest, TelegramForbiddenError):
+            pass
+        except Exception:
+            pass
+
+    if not_subscribed:
+        # Still not subscribed to all — show updated keyboard
+        await callback.answer(texts.SUBSCRIPTION_NOT_YET, show_alert=True)
+        kb = subscribe_keyboard(not_subscribed)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=kb)
+        except Exception:
+            pass
+        return
+
+    # All channels subscribed!
+    await callback.message.edit_text(texts.SUBSCRIPTION_VERIFIED)
+    await callback.answer('✅')

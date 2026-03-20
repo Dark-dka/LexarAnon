@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from .models import TelegramUser, Rating
+from .models import TelegramUser, Rating, RequiredChannel
 
 
 @admin.register(TelegramUser)
@@ -95,3 +95,32 @@ class RatingAdmin(admin.ModelAdmin):
     @admin.display(description='Оценка')
     def rating_display(self, obj):
         return '👍 Лайк' if obj.is_like else '👎 Дизлайк'
+
+
+@admin.register(RequiredChannel)
+class RequiredChannelAdmin(admin.ModelAdmin):
+    list_display = ['title', 'channel_username', 'invite_link_display', 'is_active', 'created_at']
+    list_editable = ['is_active']
+    search_fields = ['title', 'channel_username']
+    list_filter = ['is_active']
+    list_per_page = 50
+
+    fieldsets = (
+        ('📢 Канал', {
+            'fields': ('title', 'channel_username', 'invite_link', 'is_active'),
+            'description': (
+                'Укажите username канала (например: @mychannel) и ссылку для кнопки подписки. '
+                'Бот должен быть администратором канала!'
+            ),
+        }),
+        ('Мета', {
+            'fields': ('created_at',),
+            'classes': ('collapse',),
+        }),
+    )
+    readonly_fields = ['created_at']
+
+    @admin.display(description='Ссылка')
+    def invite_link_display(self, obj):
+        from django.utils.html import format_html
+        return format_html('<a href="{}" target="_blank">{}</a>', obj.invite_link, obj.invite_link)
