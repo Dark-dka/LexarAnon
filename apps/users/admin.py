@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from .models import TelegramUser, Rating, RequiredChannel
+from .models import TelegramUser, Rating, RequiredChannel, ChannelSubscriptionEvent
 
 
 @admin.register(TelegramUser)
@@ -99,7 +99,7 @@ class RatingAdmin(admin.ModelAdmin):
 
 @admin.register(RequiredChannel)
 class RequiredChannelAdmin(admin.ModelAdmin):
-    list_display = ['title', 'channel_username', 'invite_link_display', 'is_active', 'created_at']
+    list_display = ['title', 'channel_username', 'invite_link_display', 'subscribers_count', 'is_active', 'created_at']
     list_editable = ['is_active']
     search_fields = ['title', 'channel_username']
     list_filter = ['is_active']
@@ -124,3 +124,25 @@ class RequiredChannelAdmin(admin.ModelAdmin):
     def invite_link_display(self, obj):
         from django.utils.html import format_html
         return format_html('<a href="{}" target="_blank">{}</a>', obj.invite_link, obj.invite_link)
+
+    @admin.display(description='👥 Подписчиков')
+    def subscribers_count(self, obj):
+        return ChannelSubscriptionEvent.objects.filter(
+            channel_username=obj.channel_username
+        ).count()
+
+
+@admin.register(ChannelSubscriptionEvent)
+class ChannelSubscriptionEventAdmin(admin.ModelAdmin):
+    list_display = ['channel_title', 'channel_username', 'user', 'created_at']
+    list_filter = ['channel_username', 'created_at']
+    search_fields = ['channel_username', 'channel_title', 'user__username', 'user__telegram_id']
+    readonly_fields = ['user', 'channel_username', 'channel_title', 'created_at']
+    list_per_page = 100
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+

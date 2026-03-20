@@ -188,3 +188,43 @@ class RequiredChannel(models.Model):
 
     def __str__(self):
         return f'{self.title} ({self.channel_username})'
+
+
+class ChannelSubscriptionEvent(models.Model):
+    """
+    Recorded every time a user successfully passes the subscription check
+    for a required channel. Stores channel data as strings so the history
+    is preserved even after the channel is removed from RequiredChannel.
+    """
+
+    user = models.ForeignKey(
+        TelegramUser,
+        on_delete=models.CASCADE,
+        related_name='subscription_events',
+        verbose_name='Пользователь',
+    )
+    channel_username = models.CharField(
+        max_length=255,
+        verbose_name='Username канала',
+        db_index=True,
+    )
+    channel_title = models.CharField(
+        max_length=255,
+        verbose_name='Название канала',
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Дата подписки',
+        db_index=True,
+    )
+
+    class Meta:
+        verbose_name = 'Событие подписки'
+        verbose_name_plural = 'Статистика подписок'
+        ordering = ['-created_at']
+        # One entry per user per channel (upsert via get_or_create)
+        unique_together = ['user', 'channel_username']
+
+    def __str__(self):
+        return f'{self.user} → {self.channel_title} ({self.channel_username})'
+

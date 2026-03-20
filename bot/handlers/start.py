@@ -9,7 +9,7 @@ from aiogram.types import Message, CallbackQuery
 from asgiref.sync import sync_to_async
 
 from apps.users.models import TelegramUser, Rating
-from apps.users.models import RequiredChannel
+from apps.users.models import RequiredChannel, ChannelSubscriptionEvent
 from bot.services.user_sync import sync_user
 from bot.keyboards import main_menu, gender_select, search_gender_select, rate_keyboard, subscribe_keyboard
 from bot import texts
@@ -270,6 +270,19 @@ async def on_check_subscription(callback: CallbackQuery, bot: Bot):
             pass
         return
 
-    # All channels subscribed!
+    # All channels subscribed — log subscription events for each channel
+    try:
+        tg_user = await sync_to_async(TelegramUser.objects.get)(telegram_id=user_id)
+        for channel in channels:
+            await sync_to_async(ChannelSubscriptionEvent.objects.get_or_create)(
+                user=tg_user,
+                channel_username=channel.channel_username,
+                defaults={'channel_title': channel.title},
+            )
+    except Exception:
+        pass
+
+    # Grant access
     await callback.message.edit_text(texts.SUBSCRIPTION_VERIFIED)
     await callback.answer('✅')
+
