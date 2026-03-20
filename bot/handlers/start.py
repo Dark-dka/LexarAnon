@@ -11,7 +11,7 @@ from asgiref.sync import sync_to_async
 from apps.users.models import TelegramUser, Rating
 from apps.users.models import RequiredChannel, ChannelSubscriptionEvent
 from bot.services.user_sync import sync_user
-from bot.keyboards import main_menu, gender_select, search_gender_select, rate_keyboard, subscribe_keyboard
+from bot.keyboards import main_menu, gender_select, rate_keyboard, subscribe_keyboard
 from bot import texts
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
@@ -23,11 +23,6 @@ GENDER_LABELS = {
     'male': '👦 Парень',
     'female': '👧 Девушка',
     None: '❓ Не указан',
-}
-SEARCH_LABELS = {
-    'male': '👦 Парней',
-    'female': '👧 Девушек',
-    None: '🔀 Всех',
 }
 
 
@@ -70,34 +65,18 @@ async def on_gender_select(callback: CallbackQuery):
     await sync_to_async(user.save)(update_fields=['gender'])
 
     emoji = '👦' if gender == 'male' else '👧'
+    name = callback.from_user.first_name or 'Анон'
     await callback.message.edit_text(
         texts.GENDER_SET.format(emoji=emoji),
-        reply_markup=search_gender_select,
+    )
+    await callback.message.answer(
+        texts.WELCOME_BACK.format(name=name),
+        reply_markup=main_menu,
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith('search_'))
-async def on_search_gender_select(callback: CallbackQuery):
-    """Handle search gender preference."""
-    value = callback.data.replace('search_', '')  # 'male', 'female', 'any'
-    telegram_id = callback.from_user.id
-
-    user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    user.search_gender = None if value == 'any' else value
-    await sync_to_async(user.save)(update_fields=['search_gender'])
-
-    await callback.message.edit_text(
-        texts.SEARCH_GENDER_SET.format(
-            your_gender=user.gender_emoji,
-            your_label=GENDER_LABELS.get(user.gender),
-            search_label=SEARCH_LABELS.get(user.search_gender),
-        ),
-    )
-
-    # Send main menu
-    await callback.message.answer('👇', reply_markup=main_menu)
-    await callback.answer()
+# (search_gender_select removed — matching is now fully random)
 
 
 # ── Rating callbacks ─────────────────────────────────────────────────────
@@ -184,7 +163,6 @@ async def cmd_profile(message: Message):
     await message.answer(
         texts.PROFILE.format(
             gender_label=GENDER_LABELS.get(user.gender),
-            search_label=SEARCH_LABELS.get(user.search_gender),
             likes=likes,
             dislikes=dislikes,
         ),
@@ -208,14 +186,12 @@ async def cmd_settings(message: Message):
     settings_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text='🔄 Изменить пол', callback_data='change_gender')],
-            [InlineKeyboardButton(text='🔍 Изменить поиск', callback_data='change_search')],
         ]
     )
 
     await message.answer(
         texts.SETTINGS.format(
             gender_label=GENDER_LABELS.get(user.gender),
-            search_label=SEARCH_LABELS.get(user.search_gender),
         ),
         reply_markup=settings_kb,
     )
@@ -227,12 +203,7 @@ async def on_change_gender(callback: CallbackQuery):
     await callback.message.edit_text(texts.GENDER_ASK, reply_markup=gender_select)
     await callback.answer()
 
-
-@router.callback_query(F.data == 'change_search')
-async def on_change_search(callback: CallbackQuery):
-    """Re-select search preference."""
-    await callback.message.edit_text(texts.SEARCH_GENDER_ASK, reply_markup=search_gender_select)
-    await callback.answer()
+# (change_search removed — search is now fully random)
 
 
 # ── Subscription check ───────────────────────────────────────────────────
