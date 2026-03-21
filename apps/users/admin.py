@@ -1,7 +1,27 @@
 from django.contrib import admin
 from django.utils.html import format_html
+from django.utils.translation import gettext_lazy as _
 
 from .models import TelegramUser, Rating, RequiredChannel, RequiredBot, ChannelSubscriptionEvent
+
+
+class ReferredByFilter(admin.SimpleListFilter):
+    title = 'приглашён по рефералке'
+    parameter_name = 'has_referrer'
+
+    def lookups(self, request, model_admin):
+        return [
+            ('yes', 'Да — пришёл по ссылке'),
+            ('no', 'Нет — сам нашёл'),
+        ]
+
+    def queryset(self, request, queryset):
+        if self.value() == 'yes':
+            return queryset.filter(referred_by__isnull=False)
+        if self.value() == 'no':
+            return queryset.filter(referred_by__isnull=True)
+        return queryset
+
 
 
 @admin.register(TelegramUser)
@@ -16,13 +36,14 @@ class TelegramUserAdmin(admin.ModelAdmin):
         'photo_preview',
         'likes_count',
         'dislikes_count',
+        'referrals_count',
         'is_active',
         'is_blocked',
         'created_at',
     ]
-    list_filter = ['is_active', 'is_blocked', 'gender', 'search_gender', 'created_at']
+    list_filter = ['is_active', 'is_blocked', 'gender', 'search_gender', 'created_at', ReferredByFilter]
     search_fields = ['telegram_id', 'username', 'first_name', 'last_name']
-    readonly_fields = ['telegram_id', 'created_at', 'updated_at', 'photo_large', 'likes_count', 'dislikes_count']
+    readonly_fields = ['telegram_id', 'created_at', 'updated_at', 'photo_large', 'likes_count', 'dislikes_count', 'referrals_count']
     list_editable = ['is_blocked']
     list_per_page = 50
     actions = ['block_users', 'unblock_users']
@@ -38,7 +59,10 @@ class TelegramUserAdmin(admin.ModelAdmin):
             'fields': ('profile_photo', 'photo_large'),
         }),
         ('Статистика', {
-            'fields': ('likes_count', 'dislikes_count'),
+            'fields': ('likes_count', 'dislikes_count', 'referrals_count'),
+        }),
+        ('Реферал', {
+            'fields': ('referred_by',),
         }),
         ('Статус', {
             'fields': ('is_active', 'is_blocked'),
@@ -73,6 +97,10 @@ class TelegramUserAdmin(admin.ModelAdmin):
     @admin.display(description='👎 Дизлайки')
     def dislikes_count(self, obj):
         return obj.ratings_received.filter(is_like=False).count()
+
+    @admin.display(description='👥 Рефералов')
+    def referrals_count(self, obj):
+        return obj.referrals.count()
 
     @admin.action(description='🔒 Заблокировать выбранных')
     def block_users(self, request, queryset):

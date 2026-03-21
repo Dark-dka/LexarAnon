@@ -58,6 +58,15 @@ class TelegramUser(models.Model):
         null=True,
         verbose_name='Язык',
     )
+    referred_by = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='referrals',
+        verbose_name='Приглашён пользователем',
+        help_text='Кто пригласил этого пользователя',
+    )
     is_active = models.BooleanField(
         default=True,
         verbose_name='Активен',
@@ -101,6 +110,10 @@ class TelegramUser(models.Model):
         if self.username:
             return f'@{self.username}'
         return str(self.telegram_id)
+
+    @property
+    def referral_count(self) -> int:
+        return self.referrals.count()
 
     @property
     def gender_emoji(self):

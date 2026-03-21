@@ -12,6 +12,7 @@ main_menu = ReplyKeyboardMarkup(
             KeyboardButton(text='👤 Профиль'),
             KeyboardButton(text='⚙️ Настройки поиска'),
         ],
+        [KeyboardButton(text='🔗 Реферальная ссылка')],
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
