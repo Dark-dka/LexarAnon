@@ -2,26 +2,25 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 
-from .models import TelegramUser, Rating, RequiredChannel, RequiredBot, ChannelSubscriptionEvent
+from .models import TelegramUser, Rating, RequiredChannel, RequiredBot, ChannelSubscriptionEvent, ReferralCampaign
 
 
-class ReferredByFilter(admin.SimpleListFilter):
-    title = 'приглашён по рефералке'
-    parameter_name = 'has_referrer'
+class CampaignFilter(admin.SimpleListFilter):
+    title = 'рекламная кампания'
+    parameter_name = 'has_campaign'
 
     def lookups(self, request, model_admin):
         return [
-            ('yes', 'Да — пришёл по ссылке'),
-            ('no', 'Нет — сам нашёл'),
+            ('yes', 'Пришёл по рекламе'),
+            ('no', 'Органически'),
         ]
 
     def queryset(self, request, queryset):
         if self.value() == 'yes':
-            return queryset.filter(referred_by__isnull=False)
+            return queryset.filter(campaign__isnull=False)
         if self.value() == 'no':
-            return queryset.filter(referred_by__isnull=True)
+            return queryset.filter(campaign__isnull=True)
         return queryset
-
 
 
 @admin.register(TelegramUser)
@@ -32,18 +31,17 @@ class TelegramUserAdmin(admin.ModelAdmin):
         'first_name',
         'last_name',
         'gender',
-        'search_gender',
         'photo_preview',
         'likes_count',
         'dislikes_count',
-        'referrals_count',
+        'campaign',
         'is_active',
         'is_blocked',
         'created_at',
     ]
-    list_filter = ['is_active', 'is_blocked', 'gender', 'search_gender', 'created_at', ReferredByFilter]
+    list_filter = ['is_active', 'is_blocked', 'gender', 'created_at', 'campaign', CampaignFilter]
     search_fields = ['telegram_id', 'username', 'first_name', 'last_name']
-    readonly_fields = ['telegram_id', 'created_at', 'updated_at', 'photo_large', 'likes_count', 'dislikes_count', 'referrals_count']
+    readonly_fields = ['telegram_id', 'created_at', 'updated_at', 'photo_large', 'likes_count', 'dislikes_count']
     list_editable = ['is_blocked']
     list_per_page = 50
     actions = ['block_users', 'unblock_users']
@@ -59,10 +57,10 @@ class TelegramUserAdmin(admin.ModelAdmin):
             'fields': ('profile_photo', 'photo_large'),
         }),
         ('Статистика', {
-            'fields': ('likes_count', 'dislikes_count', 'referrals_count'),
+            'fields': ('likes_count', 'dislikes_count'),
         }),
-        ('Реферал', {
-            'fields': ('referred_by',),
+        ('Реклама', {
+            'fields': ('campaign',),
         }),
         ('Статус', {
             'fields': ('is_active', 'is_blocked'),
@@ -97,10 +95,6 @@ class TelegramUserAdmin(admin.ModelAdmin):
     @admin.display(description='👎 Дизлайки')
     def dislikes_count(self, obj):
         return obj.ratings_received.filter(is_like=False).count()
-
-    @admin.display(description='👥 Рефералов')
-    def referrals_count(self, obj):
-        return obj.referrals.count()
 
     @admin.action(description='🔒 Заблокировать выбранных')
     def block_users(self, request, queryset):
@@ -203,3 +197,42 @@ class ChannelSubscriptionEventAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         return False
 
+
+@admin.register(ReferralCampaign)
+class ReferralCampaignAdmin(admin.ModelAdmin):
+    list_display = ['name', 'code', 'users_count_display', 'is_active', 'invite_link_display', 'created_at']
+    list_editable = ['is_active']
+    search_fields = ['name', 'code']
+    list_filter = ['is_active', 'created_at']
+    readonly_fields = ['code', 'created_at', 'users_count_display', 'invite_link_display']
+    list_per_page = 50
+
+    fieldsets = (
+        ('📣 Кампания', {
+            'fields': ('name', 'code', 'description', 'is_active'),
+            'description': (
+                'Код генерируется автоматически при создании. '
+                'Ссылка: https://t.me/BOTNAME?start=ref_КОД'
+            ),
+        }),
+        ('📊 Статистика', {
+            'fields': ('users_count_display', 'invite_link_display'),
+        }),
+        ('Мета', {
+            'fields': ('created_at',),
+            'classes': ('collapse',),
+        }),
+    )
+
+    @admin.display(description='👥 Пользователей')
+    def users_count_display(self, obj):
+        return obj.users.count()
+
+    @admin.display(description='🔗 Ссылка')
+    def invite_link_display(self, obj):
+        from django.utils.html import format_html
+        link = f'https://t.me/BOTNAME?start=ref_{obj.code}'
+        return format_html(
+            '<a href="{}" target="_blank"><code>{}</code></a>',
+            link, link,
+        )

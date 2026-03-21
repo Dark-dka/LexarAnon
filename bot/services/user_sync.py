@@ -1,6 +1,6 @@
 """
 User sync service: creates or updates TelegramUser from Telegram user data.
-Supports optional referrer_id for referral tracking (only on first registration).
+Supports optional campaign_code for referral campaign tracking (only on first registration).
 """
 import logging
 from typing import Optional
@@ -9,7 +9,7 @@ from aiogram.types import User as TelegramUserData
 from aiogram import Bot
 from asgiref.sync import sync_to_async
 
-from apps.users.models import TelegramUser
+from apps.users.models import TelegramUser, ReferralCampaign
 from bot.services.media import download_profile_photo
 
 logger = logging.getLogger(__name__)
@@ -18,14 +18,14 @@ logger = logging.getLogger(__name__)
 async def sync_user(
     tg_user: TelegramUserData,
     bot: Bot,
-    referrer_id: Optional[int] = None,
+    campaign_code: Optional[str] = None,
 ) -> tuple[TelegramUser, bool]:
     """
     Create or update a TelegramUser from Telegram user data.
     Also downloads and updates the profile photo.
 
     Returns (user, created) tuple.
-    If referrer_id is provided and the user is new — links referred_by.
+    If campaign_code is provided and user is new — links campaign.
     """
     defaults = {
         'username': tg_user.username,
@@ -40,17 +40,17 @@ async def sync_user(
         defaults=defaults,
     )
 
-    # Set referrer only on new registration (and only if not self-referral)
-    if created and referrer_id and referrer_id != tg_user.id:
+    # Link campaign only on new registration
+    if created and campaign_code:
         try:
-            referrer = await sync_to_async(TelegramUser.objects.get)(
-                telegram_id=referrer_id
+            campaign = await sync_to_async(ReferralCampaign.objects.get)(
+                code=campaign_code, is_active=True
             )
-            user.referred_by = referrer
-            await sync_to_async(user.save)(update_fields=['referred_by'])
-            logger.info(f'User {user} referred by {referrer}')
-        except TelegramUser.DoesNotExist:
-            logger.warning(f'Referrer {referrer_id} not found in DB')
+            user.campaign = campaign
+            await sync_to_async(user.save)(update_fields=['campaign'])
+            logger.info(f'User {user} came from campaign [{campaign_code}]')
+        except ReferralCampaign.DoesNotExist:
+            logger.warning(f'Campaign code "{campaign_code}" not found or inactive')
 
     # Download / update profile photo
     photo_path = await download_profile_photo(bot, tg_user.id)

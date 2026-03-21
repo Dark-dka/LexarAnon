@@ -28,19 +28,16 @@ GENDER_LABELS = {
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, bot: Bot):
-    """Handle /start command, including deep-link referrals (start=ref_USERID)."""
+    """Handle /start command, including deep-link referral campaigns (start=ref_CODE)."""
     tg_user = message.from_user
 
-    # Parse referral deep link: /start ref_12345
-    referrer_id: int | None = None
+    # Parse campaign deep link: /start ref_abc123
+    campaign_code: str | None = None
     args = message.text.split() if message.text else []
     if len(args) > 1 and args[1].startswith('ref_'):
-        try:
-            referrer_id = int(args[1][4:])
-        except ValueError:
-            pass
+        campaign_code = args[1][4:]  # strip 'ref_' prefix
 
-    user, created = await sync_user(tg_user, bot, referrer_id=referrer_id)
+    user, created = await sync_user(tg_user, bot, campaign_code=campaign_code)
 
     if user.is_blocked:
         await message.answer(texts.BLOCKED)
@@ -49,7 +46,6 @@ async def cmd_start(message: Message, bot: Bot):
     name = tg_user.first_name or 'Анон'
 
     if not user.gender:
-        # New user or gender not set — ask gender
         await message.answer(texts.WELCOME.format(name=name))
         await message.answer(texts.GENDER_ASK, reply_markup=gender_select)
     else:
@@ -57,20 +53,6 @@ async def cmd_start(message: Message, bot: Bot):
             texts.WELCOME_BACK.format(name=name),
             reply_markup=main_menu,
         )
-
-    # Notify referrer if this is a new user
-    if created and referrer_id and referrer_id != tg_user.id:
-        try:
-            ref_count = await sync_to_async(
-                lambda: user.referred_by.referrals.count() if user.referred_by else 0
-            )()
-            new_name = tg_user.first_name or f'id{tg_user.id}'
-            await bot.send_message(
-                chat_id=referrer_id,
-                text=texts.REFERRAL_WELCOME.format(name=new_name, count=ref_count),
-            )
-        except Exception as e:
-            logger.warning(f'Could not notify referrer {referrer_id}: {e}')
 
 
 # ── Gender selection callbacks ───────────────────────────────────────────
@@ -225,30 +207,6 @@ async def on_change_gender(callback: CallbackQuery):
     await callback.answer()
 
 # (change_search removed — search is now fully random)
-
-
-# ── Referral ────────────────────────────────────────────────────
-
-@router.message(Command('referral'))
-@router.message(F.text == '🔗 Реферальная ссылка')
-async def cmd_referral(message: Message, bot: Bot):
-    """Show user's referral link and invited count."""
-    telegram_id = message.from_user.id
-
-    try:
-        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    except TelegramUser.DoesNotExist:
-        await message.answer(texts.NEED_REGISTRATION)
-        return
-
-    bot_info = await bot.get_me()
-    ref_link = f'https://t.me/{bot_info.username}?start=ref_{telegram_id}'
-    count = await sync_to_async(user.referrals.count)()
-
-    await message.answer(
-        texts.REFERRAL_INFO.format(ref_link=ref_link, count=count),
-        reply_markup=main_menu,
-    )
 
 
 # ── Subscription check ───────────────────────────────────────────────────

@@ -1,4 +1,6 @@
+import uuid
 from django.db import models
+
 
 
 class TelegramUser(models.Model):
@@ -58,14 +60,14 @@ class TelegramUser(models.Model):
         null=True,
         verbose_name='Язык',
     )
-    referred_by = models.ForeignKey(
-        'self',
+    campaign = models.ForeignKey(
+        'ReferralCampaign',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='referrals',
-        verbose_name='Приглашён пользователем',
-        help_text='Кто пригласил этого пользователя',
+        related_name='users',
+        verbose_name='Кампания',
+        help_text='Через какую рекламную кампанию пришёл пользователь',
     )
     is_active = models.BooleanField(
         default=True,
@@ -110,10 +112,6 @@ class TelegramUser(models.Model):
         if self.username:
             return f'@{self.username}'
         return str(self.telegram_id)
-
-    @property
-    def referral_count(self) -> int:
-        return self.referrals.count()
 
     @property
     def gender_emoji(self):
@@ -278,3 +276,53 @@ class ChannelSubscriptionEvent(models.Model):
     def __str__(self):
         return f'{self.user} → {self.channel_title} ({self.channel_username})'
 
+
+class ReferralCampaign(models.Model):
+    """
+    Admin-created referral campaign for tracking ad sources.
+    Each campaign gets a unique code used in the bot deep link:
+      https://t.me/<BOT_USERNAME>?start=ref_<code>
+    """
+
+    name = models.CharField(
+        max_length=255,
+        verbose_name='Название кампании',
+        help_text='Например: Instagram реклама, VK пост',
+    )
+    code = models.CharField(
+        max_length=64,
+        unique=True,
+        verbose_name='Код',
+        help_text='Используется в ссылке. Оставьте пустым — сгенерируется автоматически.',
+        blank=True,
+    )
+    description = models.TextField(
+        blank=True,
+        verbose_name='Описание',
+        help_text='Заметки: где размещена реклама, бюджет и т.д.',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name='Активна',
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Дата создания',
+    )
+
+    class Meta:
+        verbose_name = 'Рекламная кампания'
+        verbose_name_plural = 'Рекламные кампании'
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.code:
+            self.code = uuid.uuid4().hex[:10]
+        super().save(*args, **kwargs)
+
+    @property
+    def users_count(self) -> int:
+        return self.users.count()
+
+    def __str__(self):
+        return f'{self.name} [{self.code}] — {self.users_count} users'
