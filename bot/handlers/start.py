@@ -338,30 +338,3 @@ async def on_check_bots(callback: CallbackQuery):
 
     await callback.message.edit_text(texts.BOTS_CONFIRMED)
     await callback.answer('🤖✅')
-
-
-# ── Fallback ─────────────────────────────────────────────────────────────
-
-@router.message()
-async def fallback_handler(message: Message):
-    """Catch-all for unrecognized messages — restore main menu keyboard."""
-    telegram_id = message.from_user.id
-
-    try:
-        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    except TelegramUser.DoesNotExist:
-        await message.answer(texts.NEED_REGISTRATION)
-        return
-
-    if user.is_blocked:
-        await message.answer(texts.BLOCKED)
-        return
-
-    if not user.gender:
-        await message.answer(texts.GENDER_ASK, reply_markup=gender_select)
-    else:
-        await message.answer(
-            '❓ Не понимаю команду. Выбери действие из меню:\n'
-            '🔍 Найти собеседника  |  👤 Профиль  |  ⚙️ Настройки',
-            reply_markup=main_menu,
-        )

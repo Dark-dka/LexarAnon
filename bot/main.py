@@ -21,7 +21,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
 from bot.config import BOT_TOKEN
-from bot.handlers import start, search, chat, report
+from bot.handlers import start, search, chat, report, fallback
 from bot.middlewares.throttle import ThrottleMiddleware
 from bot.middlewares.subscription import SubscriptionMiddleware
 
@@ -51,11 +51,12 @@ async def main():
     dp.message.middleware(sub_mw)
     dp.callback_query.middleware(sub_mw)
 
-    # Register routers (order matters — buttons before text relay)
+    # Register routers — fallback MUST be last (catches everything)
     dp.include_router(start.router)
     dp.include_router(search.router)
     dp.include_router(report.router)
-    dp.include_router(chat.router)  # must be last (catches all text)
+    dp.include_router(chat.router)
+    dp.include_router(fallback.router)  # catch-all — always last
 
     logger.info('🚀 Bot is starting...')
 
