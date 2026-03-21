@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from .models import TelegramUser, Rating, RequiredChannel, ChannelSubscriptionEvent
+from .models import TelegramUser, Rating, RequiredChannel, RequiredBot, ChannelSubscriptionEvent
 
 
 @admin.register(TelegramUser)
@@ -130,6 +130,35 @@ class RequiredChannelAdmin(admin.ModelAdmin):
         return ChannelSubscriptionEvent.objects.filter(
             channel_username=obj.channel_username
         ).count()
+
+
+@admin.register(RequiredBot)
+class RequiredBotAdmin(admin.ModelAdmin):
+    list_display = ['title', 'bot_username', 'invite_link_display', 'is_active', 'created_at']
+    list_editable = ['is_active']
+    search_fields = ['title', 'bot_username']
+    list_filter = ['is_active']
+    list_per_page = 50
+
+    fieldsets = (
+        ('🤖 Бот', {
+            'fields': ('title', 'bot_username', 'invite_link', 'is_active'),
+            'description': (
+                'Укажите username бота (например: @mybot) и ссылку для кнопки. '
+                'Пользователь должен запустить этого бота.'
+            ),
+        }),
+        ('Мета', {
+            'fields': ('created_at',),
+            'classes': ('collapse',),
+        }),
+    )
+    readonly_fields = ['created_at']
+
+    @admin.display(description='Ссылка')
+    def invite_link_display(self, obj):
+        from django.utils.html import format_html
+        return format_html('<a href="{}" target="_blank">{}</a>', obj.invite_link, obj.invite_link)
 
 
 @admin.register(ChannelSubscriptionEvent)

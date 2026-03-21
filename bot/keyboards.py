@@ -87,3 +87,17 @@ def subscribe_keyboard(channels) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text='✅ Проверить подписку', callback_data='check_subscription')]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# Required bots keyboard — built dynamically from DB bots
+def bots_keyboard(bots) -> InlineKeyboardMarkup:
+    """Build an inline keyboard with a button for every required bot + a confirmation button."""
+    rows = [
+        [InlineKeyboardButton(text=f'🤖 {bot.title}', url=bot.invite_link)]
+        for bot in bots
+    ]
+    rows.append(
+        [InlineKeyboardButton(text='✅ Я запустил всех ботов', callback_data='check_bots')]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+

@@ -190,7 +190,44 @@ class RequiredChannel(models.Model):
         return f'{self.title} ({self.channel_username})'
 
 
+class RequiredBot(models.Model):
+    """A Telegram bot that users must start in order to use the main bot."""
+
+    title = models.CharField(
+        max_length=255,
+        verbose_name='Название бота',
+    )
+    bot_username = models.CharField(
+        max_length=255,
+        unique=True,
+        verbose_name='Username бота',
+        help_text='Например: @mybot (с @)',
+    )
+    invite_link = models.URLField(
+        verbose_name='Ссылка на бота',
+        help_text='https://t.me/mybot',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name='Активен',
+        help_text='Неактивные боты не проверяются',
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Дата добавления',
+    )
+
+    class Meta:
+        verbose_name = 'Обязательный бот'
+        verbose_name_plural = 'Обязательные боты'
+        ordering = ['title']
+
+    def __str__(self):
+        return f'{self.title} ({self.bot_username})'
+
+
 class ChannelSubscriptionEvent(models.Model):
+
     """
     Recorded every time a user successfully passes the subscription check
     for a required channel. Stores channel data as strings so the history

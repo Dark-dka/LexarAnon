@@ -1,7 +1,8 @@
 """
 Subscription middleware.
-Checks that the user is subscribed to all active RequiredChannels before
-allowing them to interact with the bot.
+Checks that the user is subscribed to all active RequiredChannels and has
+confirmed launching all active RequiredBots before allowing them to
+interact with the bot.
 """
 import logging
 from typing import Any, Awaitable, Callable, Dict
@@ -11,14 +12,14 @@ from aiogram.types import Message, CallbackQuery, TelegramObject
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from asgiref.sync import sync_to_async
 
-from apps.users.models import RequiredChannel
+from apps.users.models import RequiredChannel, RequiredBot
 from bot import texts
-from bot.keyboards import subscribe_keyboard
+from bot.keyboards import subscribe_keyboard, bots_keyboard
 
 logger = logging.getLogger(__name__)
 
 # Callbacks that are always allowed through (even without subscription)
-ALWAYS_ALLOWED_CALLBACKS = {'check_subscription'}
+ALWAYS_ALLOWED_CALLBACKS = {'check_subscription', 'check_bots'}
 
 # Reply button texts that always pass through (cancel search, stop/next chat, report)
 ALWAYS_ALLOWED_TEXTS = {
@@ -34,9 +35,10 @@ ALWAYS_ALLOWED_COMMANDS = {'/start', '/help'}
 
 class SubscriptionMiddleware(BaseMiddleware):
     """
-    Intercepts every message/callback and ensures the user is subscribed
-    to all active RequiredChannels. If not — sends the subscription prompt
-    and stops the handler chain.
+    Intercepts every message/callback and ensures the user:
+    1. Is subscribed to all active RequiredChannels.
+    2. Has confirmed launching all active RequiredBots.
+    If any check fails — sends the corresponding prompt and stops the handler chain.
     """
 
     async def __call__(
@@ -63,47 +65,60 @@ class SubscriptionMiddleware(BaseMiddleware):
 
         bot: Bot = data['bot']
 
-        # Fetch active channels from DB
+        # ── 1. Check channel subscriptions ───────────────────────────────────
         channels = await sync_to_async(list)(
             RequiredChannel.objects.filter(is_active=True)
         )
 
-        if not channels:
-            return await handler(event, data)
+        if channels:
+            not_subscribed = []
+            for channel in channels:
+                try:
+                    member = await bot.get_chat_member(
+                        chat_id=channel.channel_username,
+                        user_id=user.id,
+                    )
+                    # Statuses that count as "subscribed"
+                    if member.status not in ('member', 'administrator', 'creator'):
+                        not_subscribed.append(channel)
+                except (TelegramBadRequest, TelegramForbiddenError) as e:
+                    logger.warning(
+                        f'Cannot check subscription for {channel.channel_username}: {e}'
+                    )
+                    # If we can't check — let the user through to avoid false blocks
+                    continue
+                except Exception as e:
+                    logger.error(
+                        f'Unexpected error checking subscription for {channel.channel_username}: {e}'
+                    )
+                    continue
 
-        # Check subscription to every channel
-        not_subscribed = []
-        for channel in channels:
-            try:
-                member = await bot.get_chat_member(
-                    chat_id=channel.channel_username,
-                    user_id=user.id,
-                )
-                # Statuses that count as "subscribed"
-                if member.status not in ('member', 'administrator', 'creator'):
-                    not_subscribed.append(channel)
-            except (TelegramBadRequest, TelegramForbiddenError) as e:
-                logger.warning(
-                    f'Cannot check subscription for {channel.channel_username}: {e}'
-                )
-                # If we can't check — let the user through to avoid false blocks
-                continue
-            except Exception as e:
-                logger.error(
-                    f'Unexpected error checking subscription for {channel.channel_username}: {e}'
-                )
-                continue
+            if not_subscribed:
+                # User is missing at least one channel subscription — send prompt
+                kb = subscribe_keyboard(not_subscribed)
+                if isinstance(event, Message):
+                    await event.answer(texts.SUBSCRIPTION_REQUIRED, reply_markup=kb)
+                elif isinstance(event, CallbackQuery):
+                    await event.message.answer(texts.SUBSCRIPTION_REQUIRED, reply_markup=kb)
+                    await event.answer()
+                return None  # Stop handler chain
 
-        if not not_subscribed:
-            return await handler(event, data)
+        # ── 2. Check required bots ────────────────────────────────────────────
+        required_bots = await sync_to_async(list)(
+            RequiredBot.objects.filter(is_active=True)
+        )
 
-        # User is missing at least one subscription — send prompt
-        kb = subscribe_keyboard(not_subscribed)
+        if required_bots:
+            # Since Telegram provides no API to verify bot launches, we prompt
+            # the user to start each bot and tap the confirmation button.
+            # The check_bots callback is always allowed through (see above), so
+            # the handler itself decides what to do after the user confirms.
+            kb = bots_keyboard(required_bots)
+            if isinstance(event, Message):
+                await event.answer(texts.BOTS_REQUIRED, reply_markup=kb)
+            elif isinstance(event, CallbackQuery):
+                await event.message.answer(texts.BOTS_REQUIRED, reply_markup=kb)
+                await event.answer()
+            return None  # Stop handler chain
 
-        if isinstance(event, Message):
-            await event.answer(texts.SUBSCRIPTION_REQUIRED, reply_markup=kb)
-        elif isinstance(event, CallbackQuery):
-            await event.message.answer(texts.SUBSCRIPTION_REQUIRED, reply_markup=kb)
-            await event.answer()
-
-        return None  # Stop handler chain
+        return await handler(event, data)

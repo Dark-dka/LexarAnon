@@ -9,9 +9,9 @@ from aiogram.types import Message, CallbackQuery
 from asgiref.sync import sync_to_async
 
 from apps.users.models import TelegramUser, Rating
-from apps.users.models import RequiredChannel, ChannelSubscriptionEvent
+from apps.users.models import RequiredChannel, RequiredBot, ChannelSubscriptionEvent
 from bot.services.user_sync import sync_user
-from bot.keyboards import main_menu, gender_select, rate_keyboard, subscribe_keyboard
+from bot.keyboards import main_menu, gender_select, rate_keyboard, subscribe_keyboard, bots_keyboard
 from bot import texts
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
@@ -257,3 +257,26 @@ async def on_check_subscription(callback: CallbackQuery, bot: Bot):
     await callback.message.edit_text(texts.SUBSCRIPTION_VERIFIED)
     await callback.answer('✅')
 
+
+# ── Required bots confirmation ────────────────────────────────────────────
+
+@router.callback_query(F.data == 'check_bots')
+async def on_check_bots(callback: CallbackQuery):
+    """User confirms they have launched all required bots."""
+    # Check if there are still active required bots
+    required_bots = await sync_to_async(list)(
+        RequiredBot.objects.filter(is_active=True)
+    )
+
+    if not required_bots:
+        # No active bots required any more — just close the prompt
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.answer('✅')
+        return
+
+    # Trust the user — show confirmation and let the middleware pass them next time
+    await callback.message.edit_text(texts.BOTS_CONFIRMED)
+    await callback.answer('🤖✅')
