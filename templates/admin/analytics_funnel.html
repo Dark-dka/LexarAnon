@@ -1,0 +1,63 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<style>
+    .funnel-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+    .funnel-table th, .funnel-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #ddd; }
+    .funnel-table th { background: #f8f8f8; font-weight: 600; }
+    .funnel-table tr:hover { background: #f0f6ff; }
+    .section-title { margin: 24px 0 12px; font-size: 18px; font-weight: 600; }
+    .conv-rate { font-weight: 700; color: #1a73e8; }
+    .conv-dash { color: #999; }
+</style>
+
+<h2 class="section-title">📊 Воронка — количество событий</h2>
+<table class="funnel-table">
+    <thead>
+        <tr>
+            <th>Этап</th>
+            <th>24 часа</th>
+            <th>7 дней</th>
+            <th>30 дней</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in funnel_data %}
+        <tr>
+            <td>{{ row.label }}</td>
+            <td>{{ row.today }}</td>
+            <td>{{ row.week }}</td>
+            <td>{{ row.month }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<h2 class="section-title">🔄 Конверсии (за 7 дней)</h2>
+<table class="funnel-table">
+    <thead>
+        <tr>
+            <th>Переход</th>
+            <th>Вход</th>
+            <th>Выход</th>
+            <th>Конверсия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for c in conversions %}
+        <tr>
+            <td>{{ c.label }}</td>
+            <td>{{ c.from_count }}</td>
+            <td>{{ c.to_count }}</td>
+            <td class="{% if c.rate == '—' %}conv-dash{% else %}conv-rate{% endif %}">{{ c.rate }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<p style="color:#888;font-size:13px;">
+    Данные обновляются при перезагрузке страницы. Для просмотра отдельных событий перейдите в
+    <a href="{% url 'admin:analytics_userevent_changelist' %}">📋 События</a>.
+</p>
+{% endblock %}

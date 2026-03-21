@@ -1,38 +1,43 @@
 """
-Reply keyboards for the Telegram bot.
+Reply and inline keyboards for the Telegram bot.
 """
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    ReplyKeyboardMarkup, KeyboardButton,
+    InlineKeyboardMarkup, InlineKeyboardButton,
+)
 
 
-# Main menu keyboard
+# ── Main menu ────────────────────────────────────────────────────────────
+
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text='🔍 Найти собеседника')],
         [
             KeyboardButton(text='👤 Профиль'),
-            KeyboardButton(text='⚙️ Настройки поиска'),
+            KeyboardButton(text='⚙️ Настройки'),
         ],
+        [KeyboardButton(text='ℹ️ Как это работает')],
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
 )
 
-# Chat keyboard (during active chat)
+# ── Chat menu (during active chat) ──────────────────────────────────────
+
 chat_menu = ReplyKeyboardMarkup(
     keyboard=[
         [
-            KeyboardButton(text='⏹ Остановить'),
-            KeyboardButton(text='⏭ Следующий'),
+            KeyboardButton(text='⏹ Стоп'),
+            KeyboardButton(text='⏭ Дальше'),
         ],
-        [
-            KeyboardButton(text='🚨 Пожаловаться'),
-        ],
+        [KeyboardButton(text='🚨 Жалоба')],
     ],
     resize_keyboard=True,
     one_time_keyboard=False,
 )
 
-# Searching keyboard
+# ── Searching menu ──────────────────────────────────────────────────────
+
 searching_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text='❌ Отменить поиск')],
@@ -41,7 +46,8 @@ searching_menu = ReplyKeyboardMarkup(
     one_time_keyboard=False,
 )
 
-# Gender selection
+# ── Gender selection ─────────────────────────────────────────────────────
+
 gender_select = InlineKeyboardMarkup(
     inline_keyboard=[
         [
@@ -51,7 +57,8 @@ gender_select = InlineKeyboardMarkup(
     ],
 )
 
-# Search gender preference
+# ── Search gender preference ────────────────────────────────────────────
+
 search_gender_select = InlineKeyboardMarkup(
     inline_keyboard=[
         [
@@ -64,7 +71,9 @@ search_gender_select = InlineKeyboardMarkup(
     ],
 )
 
-# Like / Dislike after chat
+
+# ── Rating ───────────────────────────────────────────────────────────────
+
 def rate_keyboard(session_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -76,25 +85,43 @@ def rate_keyboard(session_id: int) -> InlineKeyboardMarkup:
     )
 
 
-# Subscription required keyboard — built dynamically from DB channels
+# ── After rating — nudge to search again ────────────────────────────────
+
+search_again_keyboard = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text='🔍 Найти нового собеседника', callback_data='inline_search')],
+    ],
+)
+
+# ── After activation complete — nudge to first search ────────────────────
+
+search_now_keyboard = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text='🔍 Начать поиск', callback_data='inline_search')],
+    ],
+)
+
+
+# ── Required channels keyboard ──────────────────────────────────────────
+
 def subscribe_keyboard(channels) -> InlineKeyboardMarkup:
-    """Build an inline keyboard with a button for every required channel + a check button."""
+    """Button for every required channel + check button."""
     rows = [
         [InlineKeyboardButton(text=f'📢 {ch.title}', url=ch.invite_link)]
         for ch in channels
     ]
     rows.append(
-        [InlineKeyboardButton(text='✅ Проверить подписку', callback_data='check_subscription')]
+        [InlineKeyboardButton(text='✅ Я подписался', callback_data='check_subscription')]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-# Required bots keyboard — built dynamically from DB bots
+# ── Required bots keyboard ──────────────────────────────────────────────
+
 def bots_keyboard(bots, confirmed: set[str] | None = None) -> InlineKeyboardMarkup:
     """
-    Build an inline keyboard for required bots.
-    Each bot gets two buttons: open URL + individual confirm.
-    confirmed = set of bot_usernames the user has already confirmed.
+    Two buttons per bot: open URL + individual confirm.
+    confirmed = set of bot_usernames already confirmed.
     """
     if confirmed is None:
         confirmed = set()
@@ -116,4 +143,3 @@ def bots_keyboard(bots, confirmed: set[str] | None = None) -> InlineKeyboardMark
         [InlineKeyboardButton(text='🎯 Готово', callback_data='check_bots')]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
-

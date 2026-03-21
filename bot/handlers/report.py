@@ -12,11 +12,13 @@ from apps.reports.models import Report
 from bot.services.matchmaking import matchmaking
 from bot.keyboards import main_menu
 from bot import texts
+from apps.analytics.services import track
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 
+@router.message(F.text == '🚨 Жалоба')
 @router.message(F.text == '🚨 Пожаловаться')
 async def report_partner(message: Message, bot: Bot):
     """Report the current chat partner."""
@@ -32,11 +34,9 @@ async def report_partner(message: Message, bot: Bot):
         await message.answer(texts.RELAY_FAILED)
         return
 
-    # Get user objects
     from_user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
     against_user = await sync_to_async(TelegramUser.objects.get)(telegram_id=partner_tid)
 
-    # Create report
     await sync_to_async(Report.objects.create)(
         from_user=from_user,
         against_user=against_user,
@@ -44,8 +44,9 @@ async def report_partner(message: Message, bot: Bot):
         reason='Жалоба через кнопку бота (автоматическая)',
     )
 
-    # End the chat
     await matchmaking.end_session(telegram_id)
+
+    await track(telegram_id, 'report_sent', session_id=session.id)
 
     await message.answer(texts.REPORT_SENT, reply_markup=main_menu)
 

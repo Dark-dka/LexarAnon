@@ -4,7 +4,7 @@ MUST be registered LAST so specific handlers take priority.
 """
 import logging
 
-from aiogram import Router, F
+from aiogram import Router
 from aiogram.types import Message
 from asgiref.sync import sync_to_async
 
@@ -34,8 +34,4 @@ async def fallback_handler(message: Message):
     if not user.gender:
         await message.answer(texts.GENDER_ASK, reply_markup=gender_select)
     else:
-        await message.answer(
-            '❓ Не понимаю команду. Выбери действие из меню:\n'
-            '🔍 Найти собеседника  |  👤 Профиль  |  ⚙️ Настройки',
-            reply_markup=main_menu,
-        )
+        await message.answer(texts.FALLBACK, reply_markup=main_menu)

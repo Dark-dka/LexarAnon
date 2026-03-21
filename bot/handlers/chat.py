@@ -11,8 +11,9 @@ from apps.users.models import TelegramUser
 from apps.chat.models import Message as DBMessage
 from bot.services.matchmaking import matchmaking
 from bot.services.media import download_and_save
-from bot.keyboards import main_menu, chat_menu, rate_keyboard
+from bot.keyboards import main_menu, chat_menu, rate_keyboard, searching_menu
 from bot import texts
+from apps.analytics.services import track
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -42,6 +43,9 @@ async def _check_session(message: Message):
     return session, partner_tid
 
 
+# ── Stop chat ────────────────────────────────────────────────────────────
+
+@router.message(F.text == '⏹ Стоп')
 @router.message(F.text == '⏹ Остановить')
 async def stop_chat(message: Message, bot: Bot):
     """Stop the current chat session and prompt for rating."""
@@ -51,19 +55,24 @@ async def stop_chat(message: Message, bot: Bot):
     if result:
         partner_tid, session = result
 
-        # Ask both users to rate
+        await track(telegram_id, 'chat_finished', session_id=session.id)
+        await track(partner_tid, 'partner_left', session_id=session.id)
+
         await message.answer(texts.CHAT_ENDED_BY_YOU, reply_markup=main_menu)
-        await message.answer('Оцените собеседника:', reply_markup=rate_keyboard(session.id))
+        await message.answer(texts.RATE_PROMPT, reply_markup=rate_keyboard(session.id))
 
         try:
             await bot.send_message(partner_tid, texts.CHAT_ENDED_BY_PARTNER, reply_markup=main_menu)
-            await bot.send_message(partner_tid, 'Оцените собеседника:', reply_markup=rate_keyboard(session.id))
+            await bot.send_message(partner_tid, texts.RATE_PROMPT, reply_markup=rate_keyboard(session.id))
         except Exception as e:
             logger.warning(f'Failed to notify partner {partner_tid}: {e}')
     else:
         await message.answer(texts.NOT_IN_CHAT, reply_markup=main_menu)
 
 
+# ── Next partner ─────────────────────────────────────────────────────────
+
+@router.message(F.text == '⏭ Дальше')
 @router.message(F.text == '⏭ Следующий')
 async def next_partner(message: Message, bot: Bot):
     """End current chat, prompt rating, and search for a new partner."""
@@ -73,22 +82,28 @@ async def next_partner(message: Message, bot: Bot):
     if result:
         partner_tid, session = result
 
-        # Send rating to partner
+        await track(telegram_id, 'chat_finished', session_id=session.id)
+        await track(partner_tid, 'partner_left', session_id=session.id)
+
         try:
             await bot.send_message(partner_tid, texts.CHAT_ENDED_BY_PARTNER, reply_markup=main_menu)
-            await bot.send_message(partner_tid, 'Оцените собеседника:', reply_markup=rate_keyboard(session.id))
+            await bot.send_message(partner_tid, texts.RATE_PROMPT, reply_markup=rate_keyboard(session.id))
         except Exception as e:
             logger.warning(f'Failed to notify partner {partner_tid}: {e}')
+
+    await track(telegram_id, 'next_search_started')
 
     # Search for new partner
     match_result = await matchmaking.add_to_queue(telegram_id)
 
     if match_result is None:
-        from bot.keyboards import searching_menu
         await message.answer(texts.SEARCHING_NEXT, reply_markup=searching_menu)
     else:
         partner_user, new_session = match_result
         new_partner_tid = await sync_to_async(lambda: partner_user.telegram_id)()
+
+        await track(telegram_id, 'match_found', session_id=new_session.id)
+        await track(new_partner_tid, 'match_found', session_id=new_session.id)
 
         await message.answer(texts.PARTNER_FOUND, reply_markup=chat_menu)
         await bot.send_message(new_partner_tid, texts.PARTNER_FOUND_SHORT, reply_markup=chat_menu)
@@ -100,7 +115,9 @@ async def next_partner(message: Message, bot: Bot):
 async def relay_text(message: Message, bot: Bot):
     telegram_id = message.from_user.id
     if message.text in ('🔍 Найти собеседника', '❌ Отменить поиск',
-                         '🚨 Пожаловаться', '👤 Профиль', '⚙️ Настройки поиска'):
+                         '🚨 Жалоба', '🚨 Пожаловаться',
+                         '👤 Профиль', '⚙️ Настройки', '⚙️ Настройки поиска',
+                         'ℹ️ Как это работает'):
         return
 
     result = await _check_session(message)
@@ -109,6 +126,7 @@ async def relay_text(message: Message, bot: Bot):
     session, partner_tid = result
 
     await _save_message(session.id, telegram_id, 'text', text=message.text)
+    await track(telegram_id, 'message_sent', type='text')
 
     try:
         await bot.send_message(partner_tid, message.text)
@@ -135,6 +153,7 @@ async def relay_photo(message: Message, bot: Bot):
 
     await _save_message(session.id, telegram_id, 'photo', text=message.caption,
                         file_path=file_path, telegram_file_id=file_id)
+    await track(telegram_id, 'message_sent', type='photo')
     try:
         await bot.send_photo(partner_tid, photo=file_id, caption=message.caption)
     except Exception as e:
@@ -159,6 +178,7 @@ async def relay_video(message: Message, bot: Bot):
 
     await _save_message(session.id, telegram_id, 'video', text=message.caption,
                         file_path=file_path, telegram_file_id=file_id)
+    await track(telegram_id, 'message_sent', type='video')
     try:
         await bot.send_video(partner_tid, video=file_id, caption=message.caption)
     except Exception as e:
@@ -183,6 +203,7 @@ async def relay_voice(message: Message, bot: Bot):
 
     await _save_message(session.id, telegram_id, 'voice',
                         file_path=file_path, telegram_file_id=file_id)
+    await track(telegram_id, 'message_sent', type='voice')
     try:
         await bot.send_voice(partner_tid, voice=file_id)
     except Exception as e:
@@ -207,6 +228,7 @@ async def relay_document(message: Message, bot: Bot):
 
     await _save_message(session.id, telegram_id, 'document', text=message.caption,
                         file_path=file_path, telegram_file_id=file_id)
+    await track(telegram_id, 'message_sent', type='document')
     try:
         await bot.send_document(partner_tid, document=file_id, caption=message.caption)
     except Exception as e:
@@ -225,6 +247,7 @@ async def relay_sticker(message: Message, bot: Bot):
     file_id = message.sticker.file_id
 
     await _save_message(session.id, telegram_id, 'sticker', telegram_file_id=file_id)
+    await track(telegram_id, 'message_sent', type='sticker')
     try:
         await bot.send_sticker(partner_tid, sticker=file_id)
     except Exception as e:
@@ -249,6 +272,7 @@ async def relay_video_note(message: Message, bot: Bot):
 
     await _save_message(session.id, telegram_id, 'video_note',
                         file_path=file_path, telegram_file_id=file_id)
+    await track(telegram_id, 'message_sent', type='video_note')
     try:
         await bot.send_video_note(partner_tid, video_note=file_id)
     except Exception as e:

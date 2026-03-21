@@ -1,5 +1,5 @@
 """
-Search handler: matchmaking logic with gender check.
+Search handler: matchmaking logic.
 """
 import logging
 
@@ -11,6 +11,7 @@ from apps.users.models import TelegramUser
 from bot.services.matchmaking import matchmaking
 from bot.keyboards import main_menu, chat_menu, searching_menu
 from bot import texts
+from apps.analytics.services import track
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -31,7 +32,6 @@ async def search_partner(message: Message, bot: Bot):
         await message.answer(texts.BLOCKED)
         return
 
-    # Must have gender set
     if not user.gender:
         await message.answer(texts.NEED_GENDER)
         return
@@ -44,6 +44,8 @@ async def search_partner(message: Message, bot: Bot):
         await message.answer(texts.ALREADY_SEARCHING)
         return
 
+    await track(telegram_id, 'search_started')
+
     result = await matchmaking.add_to_queue(telegram_id)
 
     if result is None:
@@ -51,6 +53,11 @@ async def search_partner(message: Message, bot: Bot):
     else:
         partner_user, session = result
         partner_tid = await sync_to_async(lambda: partner_user.telegram_id)()
+
+        await track(telegram_id, 'match_found', session_id=session.id)
+        await track(telegram_id, 'chat_started', session_id=session.id)
+        await track(partner_tid, 'match_found', session_id=session.id)
+        await track(partner_tid, 'chat_started', session_id=session.id)
 
         await message.answer(texts.PARTNER_FOUND, reply_markup=chat_menu)
         await bot.send_message(
@@ -65,6 +72,8 @@ async def cancel_search(message: Message):
     """Cancel searching for a partner."""
     telegram_id = message.from_user.id
     removed = await matchmaking.remove_from_queue(telegram_id)
+
+    await track(telegram_id, 'search_cancelled')
 
     if removed:
         await message.answer(texts.SEARCH_CANCELLED, reply_markup=main_menu)

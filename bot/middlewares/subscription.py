@@ -19,14 +19,17 @@ from bot.keyboards import subscribe_keyboard, bots_keyboard
 logger = logging.getLogger(__name__)
 
 # Callbacks that are always allowed through (even without subscription)
-ALWAYS_ALLOWED_CALLBACKS = {'check_subscription', 'check_bots'}
+ALWAYS_ALLOWED_CALLBACKS = {'check_subscription', 'check_bots', 'inline_search'}
 ALWAYS_ALLOWED_CALLBACK_PREFIXES = {'bot_done_'}
 
-# Reply button texts that always pass through (cancel search, stop/next chat, report)
+# Reply button texts that always pass through
 ALWAYS_ALLOWED_TEXTS = {
     '❌ Отменить поиск',
+    '⏹ Стоп',
     '⏹ Остановить',
+    '⏭ Дальше',
     '⏭ Следующий',
+    '🚨 Жалоба',
     '🚨 Пожаловаться',
 }
 
@@ -68,7 +71,7 @@ class SubscriptionMiddleware(BaseMiddleware):
 
         bot: Bot = data['bot']
 
-        # ── 1. Check channel subscriptions ───────────────────────────────────
+        # ── 1. Check channel subscriptions ───────────────────────────────
         channels = await sync_to_async(list)(
             RequiredChannel.objects.filter(is_active=True)
         )
@@ -81,62 +84,93 @@ class SubscriptionMiddleware(BaseMiddleware):
                         chat_id=channel.channel_username,
                         user_id=user.id,
                     )
-                    # Statuses that count as "subscribed"
                     if member.status not in ('member', 'administrator', 'creator'):
                         not_subscribed.append(channel)
-                except (TelegramBadRequest, TelegramForbiddenError) as e:
-                    logger.warning(
-                        f'Cannot check subscription for {channel.channel_username}: {e}'
-                    )
-                    # If we can't check — let the user through to avoid false blocks
-                    continue
+                except (TelegramBadRequest, TelegramForbiddenError):
+                    not_subscribed.append(channel)
                 except Exception as e:
-                    logger.error(
-                        f'Unexpected error checking subscription for {channel.channel_username}: {e}'
-                    )
-                    continue
+                    logger.warning(f'Error checking {channel.channel_username}: {e}')
+                    not_subscribed.append(channel)
 
             if not_subscribed:
-                # User is missing at least one channel subscription — send prompt
-                kb = subscribe_keyboard(not_subscribed)
-                if isinstance(event, Message):
-                    await event.answer(texts.SUBSCRIPTION_REQUIRED, reply_markup=kb)
-                elif isinstance(event, CallbackQuery):
-                    await event.message.answer(texts.SUBSCRIPTION_REQUIRED, reply_markup=kb)
-                    await event.answer()
-                return None  # Stop handler chain
+                # Determine progress step
+                has_bots = await sync_to_async(RequiredBot.objects.filter(is_active=True).exists)()
+                progress = texts.PROGRESS_1_OF_3 if has_bots else texts.PROGRESS_1_OF_3
 
-        # ── 2. Check required bots ────────────────────────────────────────────
-        required_bots = await sync_to_async(list)(
-            RequiredBot.objects.filter(is_active=True).order_by('-created_at')
-        )
+                # Track
+                try:
+                    from apps.analytics.services import track
+                    await track(user.id, 'required_channels_shown', count=len(channels))
+                except Exception:
+                    pass
+
+                if isinstance(event, CallbackQuery):
+                    try:
+                        await event.message.edit_text(
+                            texts.SUBSCRIPTION_REQUIRED.format(progress=progress),
+                            reply_markup=subscribe_keyboard(not_subscribed),
+                        )
+                    except Exception:
+                        await event.message.answer(
+                            texts.SUBSCRIPTION_REQUIRED.format(progress=progress),
+                            reply_markup=subscribe_keyboard(not_subscribed),
+                        )
+                else:
+                    await event.answer(
+                        texts.SUBSCRIPTION_REQUIRED.format(progress=progress),
+                        reply_markup=subscribe_keyboard(not_subscribed),
+                    )
+                return  # Block
+
+        # ── 2. Check required bots ───────────────────────────────────────
+        bots_qs = RequiredBot.objects.filter(is_active=True)
+        required_bots = await sync_to_async(list)(bots_qs)
 
         if required_bots:
-            latest_bot_added_at = required_bots[0].created_at
-
-            # Fetch user's confirmation timestamp from DB
+            from apps.users.models import TelegramUser as TU
             try:
-                from apps.users.models import TelegramUser
-                db_user = await sync_to_async(TelegramUser.objects.get)(
-                    telegram_id=user.id
-                )
-                confirmed_at = db_user.bots_confirmed_at
-            except Exception:
-                confirmed_at = None
+                tg_user = await sync_to_async(TU.objects.get)(telegram_id=user.id)
+            except TU.DoesNotExist:
+                return await handler(event, data)
 
-            # Block only if user never confirmed OR confirmed before a newer bot was added
-            needs_confirm = (
-                confirmed_at is None or
-                confirmed_at < latest_bot_added_at
+            latest_bot = await sync_to_async(
+                bots_qs.order_by('-created_at').first
+            )()
+
+            needs_check = (
+                tg_user.bots_confirmed_at is None
+                or (latest_bot and tg_user.bots_confirmed_at < latest_bot.created_at)
             )
 
-            if needs_confirm:
-                kb = bots_keyboard(required_bots)
-                if isinstance(event, Message):
-                    await event.answer(texts.BOTS_REQUIRED, reply_markup=kb)
-                elif isinstance(event, CallbackQuery):
-                    await event.message.answer(texts.BOTS_REQUIRED, reply_markup=kb)
-                    await event.answer()
-                return None  # Stop handler chain
+            if needs_check:
+                # Determine progress step
+                has_channels = await sync_to_async(RequiredChannel.objects.filter(is_active=True).exists)()
+                step = 2 if has_channels else 1
+                progress = f'▪▪▫ Шаг {step} из 3'
 
+                try:
+                    from apps.analytics.services import track
+                    await track(user.id, 'required_bots_shown', count=len(required_bots))
+                except Exception:
+                    pass
+
+                if isinstance(event, CallbackQuery):
+                    try:
+                        await event.message.edit_text(
+                            texts.BOTS_REQUIRED.format(progress=progress),
+                            reply_markup=bots_keyboard(required_bots),
+                        )
+                    except Exception:
+                        await event.message.answer(
+                            texts.BOTS_REQUIRED.format(progress=progress),
+                            reply_markup=bots_keyboard(required_bots),
+                        )
+                else:
+                    await event.answer(
+                        texts.BOTS_REQUIRED.format(progress=progress),
+                        reply_markup=bots_keyboard(required_bots),
+                    )
+                return  # Block
+
+        # ── All checks passed ────────────────────────────────────────────
         return await handler(event, data)

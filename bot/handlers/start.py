@@ -1,5 +1,6 @@
 """
-/start handler, gender selection, profile, settings.
+/start handler, gender selection, profile, settings, rating,
+subscription/bots check, how-it-works.
 """
 import logging
 
@@ -11,10 +12,15 @@ from asgiref.sync import sync_to_async
 from apps.users.models import TelegramUser, Rating
 from apps.users.models import RequiredChannel, RequiredBot, ChannelSubscriptionEvent
 from bot.services.user_sync import sync_user
-from bot.keyboards import main_menu, gender_select, rate_keyboard, subscribe_keyboard, bots_keyboard
+from bot.keyboards import (
+    main_menu, gender_select, rate_keyboard, subscribe_keyboard,
+    bots_keyboard, search_now_keyboard, search_again_keyboard,
+    searching_menu, chat_menu,
+)
 from bot import texts
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from apps.analytics.services import track
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -25,19 +31,29 @@ GENDER_LABELS = {
     None: '❓ Не указан',
 }
 
+# ── In-memory per-bot confirmations ──────────────────────────────────────
+_user_bot_confirmations: dict[int, set[str]] = {}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  /start
+# ═══════════════════════════════════════════════════════════════════════
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, bot: Bot):
-    """Handle /start command, including deep-link referral campaigns (start=ref_CODE)."""
+    """Handle /start command, including deep-link referral (start=ref_CODE)."""
     tg_user = message.from_user
+    telegram_id = tg_user.id
 
-    # Parse campaign deep link: /start ref_abc123
+    # Parse campaign deep link
     campaign_code: str | None = None
     args = message.text.split() if message.text else []
     if len(args) > 1 and args[1].startswith('ref_'):
-        campaign_code = args[1][4:]  # strip 'ref_' prefix
+        campaign_code = args[1][4:]
 
     user, created = await sync_user(tg_user, bot, campaign_code=campaign_code)
+
+    await track(telegram_id, 'start_opened', campaign_code=campaign_code or '', is_new=created)
 
     if user.is_blocked:
         await message.answer(texts.BLOCKED)
@@ -48,19 +64,22 @@ async def cmd_start(message: Message, bot: Bot):
     if not user.gender:
         await message.answer(texts.WELCOME.format(name=name))
         await message.answer(texts.GENDER_ASK, reply_markup=gender_select)
+        await track(telegram_id, 'gender_selection_shown')
     else:
         await message.answer(
             texts.WELCOME_BACK.format(name=name),
             reply_markup=main_menu,
         )
+        await track(telegram_id, 'main_menu_shown')
 
 
-# ── Gender selection callbacks ───────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+#  Gender selection
+# ═══════════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data.startswith('gender_'))
 async def on_gender_select(callback: CallbackQuery):
-    """Handle gender selection."""
-    gender = callback.data.replace('gender_', '')  # 'male' or 'female'
+    gender = callback.data.replace('gender_', '')
     telegram_id = callback.from_user.id
 
     user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
@@ -69,6 +88,9 @@ async def on_gender_select(callback: CallbackQuery):
 
     emoji = '👦' if gender == 'male' else '👧'
     name = callback.from_user.first_name or 'Анон'
+
+    await track(telegram_id, 'gender_selected', gender=gender)
+
     await callback.message.edit_text(
         texts.GENDER_SET.format(emoji=emoji),
     )
@@ -76,20 +98,18 @@ async def on_gender_select(callback: CallbackQuery):
         texts.WELCOME_BACK.format(name=name),
         reply_markup=main_menu,
     )
+    await track(telegram_id, 'main_menu_shown')
     await callback.answer()
 
 
-# (search_gender_select removed — matching is now fully random)
-
-
-# ── Rating callbacks ─────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+#  Rating callbacks
+# ═══════════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data.startswith('rate_'))
 async def on_rate(callback: CallbackQuery):
-    """Handle like / dislike rating."""
     parts = callback.data.split('_')
-    # rate_like_123 or rate_dislike_123
-    action = parts[1]  # 'like' or 'dislike'
+    action = parts[1]
     session_id = int(parts[2])
     telegram_id = callback.from_user.id
 
@@ -104,7 +124,6 @@ async def on_rate(callback: CallbackQuery):
 
     from_user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
 
-    # Determine who to rate
     user1_tid = await sync_to_async(lambda: session.user1.telegram_id)()
     user2_tid = await sync_to_async(lambda: session.user2.telegram_id)()
 
@@ -116,7 +135,6 @@ async def on_rate(callback: CallbackQuery):
         await callback.answer('Ошибка.')
         return
 
-    # Check if already rated
     already = await sync_to_async(
         Rating.objects.filter(
             from_user=from_user,
@@ -137,17 +155,75 @@ async def on_rate(callback: CallbackQuery):
         chat_session=session,
     )
 
+    await track(telegram_id, 'partner_rated', is_like=is_like, session_id=session_id)
+
     text = texts.RATED_LIKE if is_like else texts.RATED_DISLIKE
     await callback.message.edit_text(text)
+    await callback.message.answer('🔍 Готов к новому чату?', reply_markup=search_again_keyboard)
     await callback.answer('👍' if is_like else '👎')
 
 
-# ── Profile ──────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+#  Inline search trigger (from inline buttons)
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == 'inline_search')
+async def on_inline_search(callback: CallbackQuery, bot: Bot):
+    """Start search from an inline button (after activation or rating)."""
+    telegram_id = callback.from_user.id
+
+    try:
+        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
+    except TelegramUser.DoesNotExist:
+        await callback.answer('Нажми /start')
+        return
+
+    if not user.gender:
+        await callback.answer('Сначала укажи пол!', show_alert=True)
+        return
+
+    from bot.services.matchmaking import matchmaking
+
+    if matchmaking.is_in_chat(telegram_id):
+        await callback.answer('Ты уже в чате!', show_alert=True)
+        return
+
+    if matchmaking.is_in_queue(telegram_id):
+        await callback.answer('Поиск уже идёт!', show_alert=True)
+        return
+
+    await track(telegram_id, 'search_started')
+
+    result = await matchmaking.add_to_queue(telegram_id)
+
+    if result is None:
+        await callback.message.answer(texts.SEARCHING, reply_markup=searching_menu)
+    else:
+        partner_user, session = result
+        partner_tid = await sync_to_async(lambda: partner_user.telegram_id)()
+
+        await track(telegram_id, 'match_found', session_id=session.id)
+        await track(telegram_id, 'chat_started', session_id=session.id)
+        await track(partner_tid, 'match_found', session_id=session.id)
+        await track(partner_tid, 'chat_started', session_id=session.id)
+
+        await callback.message.answer(texts.PARTNER_FOUND, reply_markup=chat_menu)
+        await bot.send_message(partner_tid, texts.PARTNER_FOUND_SHORT, reply_markup=chat_menu)
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Profile
+# ═══════════════════════════════════════════════════════════════════════
 
 @router.message(Command('profile'))
 @router.message(F.text == '👤 Профиль')
 async def cmd_profile(message: Message):
-    """Show user profile: gender + likes/dislikes."""
     telegram_id = message.from_user.id
 
     try:
@@ -155,6 +231,8 @@ async def cmd_profile(message: Message):
     except TelegramUser.DoesNotExist:
         await message.answer(texts.NEED_REGISTRATION)
         return
+
+    await track(telegram_id, 'profile_opened')
 
     likes = await sync_to_async(
         user.ratings_received.filter(is_like=True).count
@@ -173,11 +251,13 @@ async def cmd_profile(message: Message):
     )
 
 
-# ── Settings ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+#  Settings
+# ═══════════════════════════════════════════════════════════════════════
 
+@router.message(F.text == '⚙️ Настройки')
 @router.message(F.text == '⚙️ Настройки поиска')
 async def cmd_settings(message: Message):
-    """Show search settings with options to change."""
     telegram_id = message.from_user.id
 
     try:
@@ -185,6 +265,8 @@ async def cmd_settings(message: Message):
     except TelegramUser.DoesNotExist:
         await message.answer(texts.NEED_REGISTRATION)
         return
+
+    await track(telegram_id, 'settings_opened')
 
     settings_kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -202,19 +284,30 @@ async def cmd_settings(message: Message):
 
 @router.callback_query(F.data == 'change_gender')
 async def on_change_gender(callback: CallbackQuery):
-    """Re-select gender."""
     await callback.message.edit_text(texts.GENDER_ASK, reply_markup=gender_select)
     await callback.answer()
 
-# (change_search removed — search is now fully random)
+
+# ═══════════════════════════════════════════════════════════════════════
+#  How it works
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.message(F.text == 'ℹ️ Как это работает')
+@router.message(Command('help'))
+async def cmd_how_it_works(message: Message):
+    await track(message.from_user.id, 'how_it_works_opened')
+    await message.answer(texts.HOW_IT_WORKS, reply_markup=main_menu)
 
 
-# ── Subscription check ───────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+#  Subscription check
+# ═══════════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data == 'check_subscription')
 async def on_check_subscription(callback: CallbackQuery, bot: Bot):
-    """Re-check all active channels; let user in or prompt to subscribe."""
     user_id = callback.from_user.id
+
+    await track(user_id, 'subscription_check_clicked')
 
     channels = await sync_to_async(list)(
         RequiredChannel.objects.filter(is_active=True)
@@ -229,102 +322,89 @@ async def on_check_subscription(callback: CallbackQuery, bot: Bot):
             )
             if member.status not in ('member', 'administrator', 'creator'):
                 not_subscribed.append(channel)
+            else:
+                await sync_to_async(
+                    ChannelSubscriptionEvent.objects.get_or_create
+                )(
+                    user_id=(await sync_to_async(
+                        TelegramUser.objects.get
+                    )(telegram_id=user_id)).id,
+                    channel_username=channel.channel_username,
+                    defaults={'channel_title': channel.title},
+                )
         except (TelegramBadRequest, TelegramForbiddenError):
-            pass
-        except Exception:
-            pass
+            not_subscribed.append(channel)
+        except Exception as e:
+            logger.warning(f'Subscription check error for {channel.channel_username}: {e}')
+            not_subscribed.append(channel)
 
     if not_subscribed:
-        # Still not subscribed to all — show updated keyboard
         await callback.answer(texts.SUBSCRIPTION_NOT_YET, show_alert=True)
-        kb = subscribe_keyboard(not_subscribed)
-        try:
-            await callback.message.edit_reply_markup(reply_markup=kb)
-        except Exception:
-            pass
-        return
+    else:
+        await track(user_id, 'required_channels_passed')
 
-    # All channels subscribed — log subscription events for each channel
-    try:
-        tg_user = await sync_to_async(TelegramUser.objects.get)(telegram_id=user_id)
-        for channel in channels:
-            await sync_to_async(ChannelSubscriptionEvent.objects.get_or_create)(
-                user=tg_user,
-                channel_username=channel.channel_username,
-                defaults={'channel_title': channel.title},
-            )
-    except Exception:
-        pass
-
-    # Grant access
-    await callback.message.edit_text(texts.SUBSCRIPTION_VERIFIED)
-    await callback.answer('✅')
+        await callback.message.edit_text(texts.SUBSCRIPTION_VERIFIED)
+        await callback.answer('✅')
 
 
-# ── Required bots confirmation ────────────────────────────────────────────
-
-# In-memory store: {telegram_id: set_of_confirmed_bot_usernames}
-# Resets on bot restart — only kept until user finishes confirmation flow
-_user_bot_confirmations: dict[int, set] = {}
-
+# ═══════════════════════════════════════════════════════════════════════
+#  Required bots — per-bot confirm
+# ═══════════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data.startswith('bot_done_'))
 async def on_bot_done(callback: CallbackQuery):
-    """User tapped '☑️ Запустил' for a specific bot — mark it confirmed."""
-    bot_username = callback.data[len('bot_done_'):]
+    """Individual bot confirmation."""
     user_id = callback.from_user.id
+    bot_username = callback.data.replace('bot_done_', '')
 
-    if user_id not in _user_bot_confirmations:
-        _user_bot_confirmations[user_id] = set()
-    _user_bot_confirmations[user_id].add(bot_username)
+    confirmed = _user_bot_confirmations.setdefault(user_id, set())
+    confirmed.add(bot_username)
 
-    # Rebuild keyboard with updated tick marks
-    required_bots = await sync_to_async(list)(
+    await track(user_id, 'required_bot_confirmed', bot_username=bot_username)
+
+    bots = await sync_to_async(list)(
         RequiredBot.objects.filter(is_active=True)
     )
-    confirmed = _user_bot_confirmations.get(user_id, set())
-    kb = bots_keyboard(required_bots, confirmed=confirmed)
+
+    # Determine progress text
+    total_steps = 3
+    has_channels = await sync_to_async(RequiredChannel.objects.filter(is_active=True).exists)()
+    current_step = 2 if has_channels else 1
+    progress = f'▪▪▫ Шаг {current_step} из {total_steps}'
 
     try:
-        await callback.message.edit_reply_markup(reply_markup=kb)
-    except Exception:
+        await callback.message.edit_text(
+            texts.BOTS_REQUIRED.format(progress=progress),
+            reply_markup=bots_keyboard(bots, confirmed=confirmed),
+        )
+    except TelegramBadRequest:
         pass
-    await callback.answer(f'✅ {bot_username} отмечен!')
+
+    await callback.answer(f'✅ {bot_username} подтверждён')
 
 
 @router.callback_query(F.data == 'check_bots')
 async def on_check_bots(callback: CallbackQuery):
-    """User tapped 🎯 Готово — validate all bots individually confirmed."""
-    required_bots = await sync_to_async(list)(
-        RequiredBot.objects.filter(is_active=True)
-    )
-
-    if not required_bots:
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.answer('✅')
-        return
-
+    """Final check — all bots must be individually confirmed."""
     user_id = callback.from_user.id
     confirmed = _user_bot_confirmations.get(user_id, set())
 
-    # Check which bots are not yet individually confirmed
-    missing = [
-        bot for bot in required_bots
-        if bot.bot_username.lstrip('@') not in confirmed
-    ]
+    bots = await sync_to_async(list)(
+        RequiredBot.objects.filter(is_active=True)
+    )
+
+    required_usernames = {b.bot_username.lstrip('@') for b in bots}
+    missing = required_usernames - confirmed
 
     if missing:
-        names = ', '.join(b.bot_username for b in missing)
+        missing_list = ', '.join(f'@{u}' for u in missing)
         await callback.answer(
-            f'❌ Вы не запустили: {names}\nСначала откройте и запустите каждого бота!',
+            f'❌ Не подтверждено: {missing_list}\nОткрой и запусти каждого бота!',
             show_alert=True,
         )
         return
 
-    # All confirmed — save timestamp and let middleware pass user through
+    # Save timestamp
     try:
         from django.utils import timezone
         user = await sync_to_async(TelegramUser.objects.get)(telegram_id=user_id)
@@ -333,8 +413,13 @@ async def on_check_bots(callback: CallbackQuery):
     except Exception as e:
         logger.warning(f'Could not save bots_confirmed_at: {e}')
 
-    # Clear in-memory state
     _user_bot_confirmations.pop(user_id, None)
 
+    await track(user_id, 'required_bots_passed')
+
     await callback.message.edit_text(texts.BOTS_CONFIRMED)
-    await callback.answer('🤖✅')
+    await callback.message.answer(
+        '🚀 Всё готово! Найди первого собеседника:',
+        reply_markup=search_now_keyboard,
+    )
+    await callback.answer('🎉')
