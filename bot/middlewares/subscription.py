@@ -105,20 +105,35 @@ class SubscriptionMiddleware(BaseMiddleware):
 
         # ── 2. Check required bots ────────────────────────────────────────────
         required_bots = await sync_to_async(list)(
-            RequiredBot.objects.filter(is_active=True)
+            RequiredBot.objects.filter(is_active=True).order_by('-created_at')
         )
 
         if required_bots:
-            # Since Telegram provides no API to verify bot launches, we prompt
-            # the user to start each bot and tap the confirmation button.
-            # The check_bots callback is always allowed through (see above), so
-            # the handler itself decides what to do after the user confirms.
-            kb = bots_keyboard(required_bots)
-            if isinstance(event, Message):
-                await event.answer(texts.BOTS_REQUIRED, reply_markup=kb)
-            elif isinstance(event, CallbackQuery):
-                await event.message.answer(texts.BOTS_REQUIRED, reply_markup=kb)
-                await event.answer()
-            return None  # Stop handler chain
+            latest_bot_added_at = required_bots[0].created_at
+
+            # Fetch user's confirmation timestamp from DB
+            try:
+                from apps.users.models import TelegramUser
+                db_user = await sync_to_async(TelegramUser.objects.get)(
+                    telegram_id=user.id
+                )
+                confirmed_at = db_user.bots_confirmed_at
+            except Exception:
+                confirmed_at = None
+
+            # Block only if user never confirmed OR confirmed before a newer bot was added
+            needs_confirm = (
+                confirmed_at is None or
+                confirmed_at < latest_bot_added_at
+            )
+
+            if needs_confirm:
+                kb = bots_keyboard(required_bots)
+                if isinstance(event, Message):
+                    await event.answer(texts.BOTS_REQUIRED, reply_markup=kb)
+                elif isinstance(event, CallbackQuery):
+                    await event.message.answer(texts.BOTS_REQUIRED, reply_markup=kb)
+                    await event.answer()
+                return None  # Stop handler chain
 
         return await handler(event, data)

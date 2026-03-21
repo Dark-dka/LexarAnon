@@ -69,6 +69,12 @@ class TelegramUser(models.Model):
         verbose_name='Кампания',
         help_text='Через какую рекламную кампанию пришёл пользователь',
     )
+    bots_confirmed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Боты подтверждены',
+        help_text='Когда пользователь последний раз подтвердил запуск обязательных ботов',
+    )
     is_active = models.BooleanField(
         default=True,
         verbose_name='Активен',
@@ -86,6 +92,7 @@ class TelegramUser(models.Model):
         auto_now=True,
         verbose_name='Последнее обновление',
     )
+
 
     class Meta:
         verbose_name = 'Пользователь'

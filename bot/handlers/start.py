@@ -266,13 +266,11 @@ async def on_check_subscription(callback: CallbackQuery, bot: Bot):
 @router.callback_query(F.data == 'check_bots')
 async def on_check_bots(callback: CallbackQuery):
     """User confirms they have launched all required bots."""
-    # Check if there are still active required bots
     required_bots = await sync_to_async(list)(
         RequiredBot.objects.filter(is_active=True)
     )
 
     if not required_bots:
-        # No active bots required any more — just close the prompt
         try:
             await callback.message.delete()
         except Exception:
@@ -280,6 +278,16 @@ async def on_check_bots(callback: CallbackQuery):
         await callback.answer('✅')
         return
 
-    # Trust the user — show confirmation and let the middleware pass them next time
+    # Save confirmation timestamp — middleware will check this on next request
+    try:
+        from django.utils import timezone
+        user = await sync_to_async(TelegramUser.objects.get)(
+            telegram_id=callback.from_user.id
+        )
+        user.bots_confirmed_at = timezone.now()
+        await sync_to_async(user.save)(update_fields=['bots_confirmed_at'])
+    except Exception as e:
+        logger.warning(f'Could not save bots_confirmed_at: {e}')
+
     await callback.message.edit_text(texts.BOTS_CONFIRMED)
     await callback.answer('🤖✅')
