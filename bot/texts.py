@@ -232,7 +232,6 @@ PROFILE = (
     "\n"
     "┌─────────────────────\n"
     "│ 🏷 <b>{display_name}</b>\n"
-    "│ 🆔 <code>{telegram_id}</code>\n"
     "├─────────────────────\n"
     "│ ⚧ Пол: <b>{gender_label}</b>\n"
     "│ 🎯 Ищу: <b>{search_label}</b>\n"
@@ -241,7 +240,6 @@ PROFILE = (
     "│ 👍 Лайков: <b>{likes}</b>\n"
     "│ 👎 Дизлайков: <b>{dislikes}</b>\n"
     "├─────────────────────\n"
-    "│ 📅 С нами с: <b>{joined}</b>\n"
     "│ {status_line}\n"
     "└─────────────────────"
 )

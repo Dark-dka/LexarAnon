@@ -246,8 +246,6 @@ async def _build_profile_text(user, telegram_id):
         ).count
     )()
 
-    joined = user.created_at.strftime('%d.%m.%Y')
-
     from bot.services.matchmaking import matchmaking
     if matchmaking.is_in_chat(telegram_id):
         status_line = texts.PROFILE_STATUS_IN_CHAT
@@ -258,13 +256,11 @@ async def _build_profile_text(user, telegram_id):
 
     return texts.PROFILE.format(
         display_name=user.display_name,
-        telegram_id=user.telegram_id,
         gender_label=GENDER_LABELS.get(user.gender),
         search_label=SEARCH_LABELS.get(user.search_gender),
         chats_count=chats_count,
         likes=likes,
         dislikes=dislikes,
-        joined=joined,
         status_line=status_line,
     )
 
