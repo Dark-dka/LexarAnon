@@ -90,14 +90,30 @@ def subscribe_keyboard(channels) -> InlineKeyboardMarkup:
 
 
 # Required bots keyboard — built dynamically from DB bots
-def bots_keyboard(bots) -> InlineKeyboardMarkup:
-    """Build an inline keyboard with a button for every required bot + a confirmation button."""
-    rows = [
-        [InlineKeyboardButton(text=f'🤖 {bot.title}', url=bot.invite_link)]
-        for bot in bots
-    ]
+def bots_keyboard(bots, confirmed: set[str] | None = None) -> InlineKeyboardMarkup:
+    """
+    Build an inline keyboard for required bots.
+    Each bot gets two buttons: open URL + individual confirm.
+    confirmed = set of bot_usernames the user has already confirmed.
+    """
+    if confirmed is None:
+        confirmed = set()
+
+    rows = []
+    for bot in bots:
+        username = bot.bot_username.lstrip('@')
+        is_done = username in confirmed
+        tick = '✅' if is_done else '☑️'
+        rows.append([
+            InlineKeyboardButton(text=f'🤖 {bot.title}', url=bot.invite_link),
+            InlineKeyboardButton(
+                text=f'{tick} Запустил',
+                callback_data=f'bot_done_{username}',
+            ),
+        ])
+
     rows.append(
-        [InlineKeyboardButton(text='✅ Я запустил всех ботов', callback_data='check_bots')]
+        [InlineKeyboardButton(text='🎯 Готово', callback_data='check_bots')]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

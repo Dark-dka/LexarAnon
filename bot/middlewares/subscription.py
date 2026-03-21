@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Callbacks that are always allowed through (even without subscription)
 ALWAYS_ALLOWED_CALLBACKS = {'check_subscription', 'check_bots'}
+ALWAYS_ALLOWED_CALLBACK_PREFIXES = {'bot_done_'}
 
 # Reply button texts that always pass through (cancel search, stop/next chat, report)
 ALWAYS_ALLOWED_TEXTS = {
@@ -52,6 +53,8 @@ class SubscriptionMiddleware(BaseMiddleware):
             user = event.from_user
             # Always let whitelisted callbacks through
             if event.data in ALWAYS_ALLOWED_CALLBACKS:
+                return await handler(event, data)
+            if any(event.data.startswith(p) for p in ALWAYS_ALLOWED_CALLBACK_PREFIXES):
                 return await handler(event, data)
         elif isinstance(event, Message):
             user = event.from_user

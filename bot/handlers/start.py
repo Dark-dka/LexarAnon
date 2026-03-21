@@ -263,9 +263,38 @@ async def on_check_subscription(callback: CallbackQuery, bot: Bot):
 
 # ── Required bots confirmation ────────────────────────────────────────────
 
+# In-memory store: {telegram_id: set_of_confirmed_bot_usernames}
+# Resets on bot restart — only kept until user finishes confirmation flow
+_user_bot_confirmations: dict[int, set] = {}
+
+
+@router.callback_query(F.data.startswith('bot_done_'))
+async def on_bot_done(callback: CallbackQuery):
+    """User tapped '☑️ Запустил' for a specific bot — mark it confirmed."""
+    bot_username = callback.data[len('bot_done_'):]
+    user_id = callback.from_user.id
+
+    if user_id not in _user_bot_confirmations:
+        _user_bot_confirmations[user_id] = set()
+    _user_bot_confirmations[user_id].add(bot_username)
+
+    # Rebuild keyboard with updated tick marks
+    required_bots = await sync_to_async(list)(
+        RequiredBot.objects.filter(is_active=True)
+    )
+    confirmed = _user_bot_confirmations.get(user_id, set())
+    kb = bots_keyboard(required_bots, confirmed=confirmed)
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer(f'✅ {bot_username} отмечен!')
+
+
 @router.callback_query(F.data == 'check_bots')
 async def on_check_bots(callback: CallbackQuery):
-    """User confirms they have launched all required bots."""
+    """User tapped 🎯 Готово — validate all bots individually confirmed."""
     required_bots = await sync_to_async(list)(
         RequiredBot.objects.filter(is_active=True)
     )
@@ -278,16 +307,34 @@ async def on_check_bots(callback: CallbackQuery):
         await callback.answer('✅')
         return
 
-    # Save confirmation timestamp — middleware will check this on next request
+    user_id = callback.from_user.id
+    confirmed = _user_bot_confirmations.get(user_id, set())
+
+    # Check which bots are not yet individually confirmed
+    missing = [
+        bot for bot in required_bots
+        if bot.bot_username.lstrip('@') not in confirmed
+    ]
+
+    if missing:
+        names = ', '.join(b.bot_username for b in missing)
+        await callback.answer(
+            f'❌ Вы не запустили: {names}\nСначала откройте и запустите каждого бота!',
+            show_alert=True,
+        )
+        return
+
+    # All confirmed — save timestamp and let middleware pass user through
     try:
         from django.utils import timezone
-        user = await sync_to_async(TelegramUser.objects.get)(
-            telegram_id=callback.from_user.id
-        )
+        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=user_id)
         user.bots_confirmed_at = timezone.now()
         await sync_to_async(user.save)(update_fields=['bots_confirmed_at'])
     except Exception as e:
         logger.warning(f'Could not save bots_confirmed_at: {e}')
+
+    # Clear in-memory state
+    _user_bot_confirmations.pop(user_id, None)
 
     await callback.message.edit_text(texts.BOTS_CONFIRMED)
     await callback.answer('🤖✅')
