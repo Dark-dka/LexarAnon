@@ -286,8 +286,8 @@ class ReferralCampaign(models.Model):
 
     name = models.CharField(
         max_length=255,
-        verbose_name='Название кампании',
-        help_text='Например: Instagram реклама, VK пост',
+        verbose_name='Название',
+        help_text='Например: Instagram, VK, Telegram-канал',
     )
     code = models.CharField(
         max_length=64,
@@ -298,8 +298,8 @@ class ReferralCampaign(models.Model):
     )
     description = models.TextField(
         blank=True,
-        verbose_name='Описание',
-        help_text='Заметки: где размещена реклама, бюджет и т.д.',
+        verbose_name='Заметки',
+        help_text='Где размещаете, какой аудиторий и т.д.',
     )
     is_active = models.BooleanField(
         default=True,
@@ -311,8 +311,8 @@ class ReferralCampaign(models.Model):
     )
 
     class Meta:
-        verbose_name = 'Рекламная кампания'
-        verbose_name_plural = 'Рекламные кампании'
+        verbose_name = 'Реферальная ссылка'
+        verbose_name_plural = 'Реферальные ссылки'
         ordering = ['-created_at']
 
     def save(self, *args, **kwargs):

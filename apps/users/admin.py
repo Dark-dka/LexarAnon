@@ -208,11 +208,11 @@ class ReferralCampaignAdmin(admin.ModelAdmin):
     list_per_page = 50
 
     fieldsets = (
-        ('📣 Кампания', {
+        ('🔗 Реферальная ссылка', {
             'fields': ('name', 'code', 'description', 'is_active'),
             'description': (
-                'Код генерируется автоматически при создании. '
-                'Ссылка: https://t.me/BOTNAME?start=ref_КОД'
+                'Код генерируется автоматически. '
+                'Ссылка: https://t.me/«BOTNAME»?start=ref_КОД'
             ),
         }),
         ('📊 Статистика', {
