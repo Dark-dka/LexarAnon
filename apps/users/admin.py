@@ -231,7 +231,9 @@ class ReferralCampaignAdmin(admin.ModelAdmin):
     @admin.display(description='🔗 Ссылка')
     def invite_link_display(self, obj):
         from django.utils.html import format_html
-        link = f'https://t.me/BOTNAME?start=ref_{obj.code}'
+        from bot.config import BOT_USERNAME
+        bot = BOT_USERNAME or 'BOTNAME'
+        link = f'https://t.me/{bot}?start=ref_{obj.code}'
         return format_html(
             '<a href="{}" target="_blank"><code>{}</code></a>',
             link, link,

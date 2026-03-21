@@ -7,6 +7,7 @@ from decouple import config
 
 # Telegram
 BOT_TOKEN = config('TELEGRAM_BOT_TOKEN', default='')
+BOT_USERNAME = config('BOT_USERNAME', default='')
 WEBHOOK_URL = config('WEBHOOK_URL', default='')
 
 # Rate limiting
