@@ -71,6 +71,52 @@ search_gender_select = InlineKeyboardMarkup(
     ],
 )
 
+# ── Settings: gender change selection ────────────────────────────────────
+
+settings_gender_select = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(text='👦 Парень', callback_data='set_gender_male'),
+            InlineKeyboardButton(text='👧 Девушка', callback_data='set_gender_female'),
+        ],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back_to_settings')],
+    ],
+)
+
+# ── Settings: search preference selection ────────────────────────────────
+
+settings_search_select = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(text='👦 Парней', callback_data='set_search_male'),
+            InlineKeyboardButton(text='👧 Девушек', callback_data='set_search_female'),
+        ],
+        [
+            InlineKeyboardButton(text='🔀 Всех', callback_data='set_search_any'),
+        ],
+        [InlineKeyboardButton(text='⬅️ Назад', callback_data='back_to_settings')],
+    ],
+)
+
+# ── Profile actions ──────────────────────────────────────────────────────
+
+profile_actions_keyboard = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text='⚙️ Настройки', callback_data='open_settings')],
+        [InlineKeyboardButton(text='🔍 Найти собеседника', callback_data='inline_search')],
+    ],
+)
+
+# ── Settings menu ────────────────────────────────────────────────────────
+
+settings_keyboard = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text='⚧ Изменить пол', callback_data='settings_change_gender')],
+        [InlineKeyboardButton(text='🎯 Кого искать', callback_data='settings_change_search')],
+        [InlineKeyboardButton(text='⬅️ Назад в профиль', callback_data='back_to_profile')],
+    ],
+)
+
 
 # ── Rating ───────────────────────────────────────────────────────────────
 

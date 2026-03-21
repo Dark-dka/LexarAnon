@@ -38,6 +38,12 @@ class EventType(models.TextChoices):
     SETTINGS_OPENED = 'settings_opened', 'Настройки открыты'
     HOW_IT_WORKS_OPENED = 'how_it_works_opened', 'Как это работает'
 
+    # ── Settings changes ─────────────────────────────────────────────
+    GENDER_CHANGE_STARTED = 'gender_change_started', 'Смена пола начата'
+    GENDER_CHANGED = 'gender_changed', 'Пол изменён'
+    SEARCH_PREF_CHANGE_STARTED = 'search_pref_change_started', 'Смена предпочтения начата'
+    SEARCH_PREF_CHANGED = 'search_pref_changed', 'Предпочтение изменено'
+
 
 class UserEvent(models.Model):
     """Single analytics event tied to a user."""
