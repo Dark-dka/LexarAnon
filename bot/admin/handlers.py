@@ -5,7 +5,7 @@ Protected by AdminFilter (telegram_id check).
 import logging
 
 from aiogram import Router, F, Bot
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from asgiref.sync import sync_to_async
@@ -123,9 +123,17 @@ async def on_users_search_prompt(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(F.text, AdminFilter())
+@router.message(
+    F.text,
+    AdminFilter(),
+    StateFilter(
+        'admin_user_search',
+        AddChannelFSM.title, AddChannelFSM.username, AddChannelFSM.invite_link,
+        AddBotFSM.title, AddBotFSM.username, AddBotFSM.invite_link,
+    ),
+)
 async def on_admin_text_input(message: Message, state: FSMContext):
-    """Handle text input for admin FSM states."""
+    """Handle text input for admin FSM states only."""
     current = await state.get_state()
 
     if current == 'admin_user_search':
