@@ -9,7 +9,7 @@ from aiogram.types import Message
 from asgiref.sync import sync_to_async
 
 from apps.users.models import TelegramUser
-from bot.keyboards import main_menu, gender_select
+from bot.keyboards import main_menu
 from bot import texts
 
 router = Router()
@@ -31,7 +31,5 @@ async def fallback_handler(message: Message):
         await message.answer(texts.BLOCKED)
         return
 
-    if not user.gender:
-        await message.answer(texts.GENDER_ASK, reply_markup=gender_select)
-    else:
-        await message.answer(texts.FALLBACK, reply_markup=main_menu)
+    await message.answer(texts.FALLBACK, reply_markup=main_menu)
+
