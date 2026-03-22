@@ -14,6 +14,7 @@ from bot.services.media import download_and_save
 from bot.keyboards import main_menu, chat_menu, rate_keyboard, searching_menu
 from bot import texts
 from apps.analytics.services import track
+from bot.admin.services import touch_activity
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ async def _save_message(session_id, sender_tid, msg_type, text=None, file_path=N
         file=file_path or '',
         telegram_file_id=telegram_file_id or '',
     )
+    await touch_activity(sender_tid)
 
 
 async def _check_session(message: Message):

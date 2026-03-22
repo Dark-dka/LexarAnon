@@ -236,6 +236,7 @@ async def cmd_profile(message: Message):
         return
 
     await track(telegram_id, 'profile_opened')
+    await touch_activity(telegram_id)
 
     profile_text = await _build_profile_text(user, telegram_id)
     await message.answer(profile_text, reply_markup=profile_actions_keyboard)

@@ -11,6 +11,7 @@ from asgiref.sync import sync_to_async
 from apps.users.models import TelegramUser
 from bot.keyboards import main_menu
 from bot import texts
+from bot.admin.services import touch_activity
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -31,5 +32,6 @@ async def fallback_handler(message: Message):
         await message.answer(texts.BLOCKED)
         return
 
+    await touch_activity(telegram_id)
     await message.answer(texts.FALLBACK, reply_markup=main_menu)
 
