@@ -82,7 +82,7 @@ async def on_stats(callback: CallbackQuery):
         f'   <i>(сегодня / 7д / 30д)</i>\n'
         '\n'
         f'🟢 Живые: <b>{s["alive_1d"]}</b> / {s["alive_7d"]} / {s["alive_30d"]}\n'
-        f'💀 Мёртвые: <b>{s["dead_7d"]}</b> (7д+) / {s["dead_30d"]} (30д+)\n'
+        f'💀 Мёртвые: <b>{s["dead_3d"]}</b> (3д+) / {s["dead_30d"]} (30д+)\n'
         f'🚫 Заблок: <b>{s["blocked"]}</b>\n'
         '\n'
         f'🔍 В поиске: <b>{q_size}</b>\n'
@@ -175,7 +175,7 @@ async def on_users_list(callback: CallbackQuery):
         'recent': '🆕 Новые',
         'alive_1d': '🟢 Живые 24ч',
         'alive_7d': '🟡 Живые 7д',
-        'dead_7d': '💀 Мёртвые 7д+',
+        'dead_3d': '💀 Мёртвые 3д+',
         'dead_30d': '☠️ Мёртвые 30д+',
         'blocked': '🚫 Заблокированные',
     }

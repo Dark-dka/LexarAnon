@@ -38,7 +38,7 @@ users_menu = InlineKeyboardMarkup(inline_keyboard=[
     ],
     [
         InlineKeyboardButton(text='🟡 Живые 7д', callback_data='adm:users:alive_7d:0'),
-        InlineKeyboardButton(text='💀 Мёртвые 7д+', callback_data='adm:users:dead_7d:0'),
+        InlineKeyboardButton(text='💀 Мёртвые 3д+', callback_data='adm:users:dead_3d:0'),
     ],
     [
         InlineKeyboardButton(text='☠️ Мёртвые 30д+', callback_data='adm:users:dead_30d:0'),

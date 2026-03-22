@@ -15,6 +15,7 @@ async def get_stats() -> dict:
     """Aggregate all dashboard stats."""
     now = timezone.now()
     d1 = now - timedelta(days=1)
+    d3 = now - timedelta(days=3)
     d7 = now - timedelta(days=7)
     d30 = now - timedelta(days=30)
 
@@ -28,8 +29,8 @@ async def get_stats() -> dict:
         alive_7d = TelegramUser.objects.filter(last_activity_at__gte=d7).count()
         alive_30d = TelegramUser.objects.filter(last_activity_at__gte=d30).count()
 
-        dead_7d = TelegramUser.objects.filter(
-            Q(last_activity_at__lt=d7) | Q(last_activity_at__isnull=True)
+        dead_3d = TelegramUser.objects.filter(
+            Q(last_activity_at__lt=d3) | Q(last_activity_at__isnull=True)
         ).count()
         dead_30d = TelegramUser.objects.filter(
             Q(last_activity_at__lt=d30) | Q(last_activity_at__isnull=True)
@@ -56,7 +57,7 @@ async def get_stats() -> dict:
             'total': total,
             'new_1d': new_1d, 'new_7d': new_7d, 'new_30d': new_30d,
             'alive_1d': alive_1d, 'alive_7d': alive_7d, 'alive_30d': alive_30d,
-            'dead_7d': dead_7d, 'dead_30d': dead_30d,
+            'dead_3d': dead_3d, 'dead_30d': dead_30d,
             'blocked': blocked,
             'active_chats': active_chats,
             'chats_today': chats_today, 'chats_7d': chats_7d,
@@ -71,6 +72,7 @@ async def get_users_list(segment: str, page: int = 0, per_page: int = 10) -> tup
     """Get paginated user list by segment. Returns (users, total_count)."""
     now = timezone.now()
     d1 = now - timedelta(days=1)
+    d3 = now - timedelta(days=3)
     d7 = now - timedelta(days=7)
     d30 = now - timedelta(days=30)
 
@@ -82,9 +84,9 @@ async def get_users_list(segment: str, page: int = 0, per_page: int = 10) -> tup
             qs = qs.filter(last_activity_at__gte=d1).order_by('-last_activity_at')
         elif segment == 'alive_7d':
             qs = qs.filter(last_activity_at__gte=d7).order_by('-last_activity_at')
-        elif segment == 'dead_7d':
+        elif segment == 'dead_3d':
             qs = qs.filter(
-                Q(last_activity_at__lt=d7) | Q(last_activity_at__isnull=True)
+                Q(last_activity_at__lt=d3) | Q(last_activity_at__isnull=True)
             ).order_by('-created_at')
         elif segment == 'dead_30d':
             qs = qs.filter(
