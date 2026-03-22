@@ -1,6 +1,6 @@
 """
-/start handler, gender selection, profile, settings, rating,
-subscription/bots check, how-it-works.
+/start handler, profile, rating, subscription/bots check, how-it-works.
+Gender selection has been removed from the onboarding and settings flow.
 """
 import logging
 
@@ -13,23 +13,16 @@ from apps.users.models import TelegramUser, Rating
 from apps.users.models import RequiredChannel, RequiredBot, ChannelSubscriptionEvent
 from bot.services.user_sync import sync_user
 from bot.keyboards import (
-    main_menu, gender_select, rate_keyboard, subscribe_keyboard,
+    main_menu, rate_keyboard, subscribe_keyboard,
     bots_keyboard, search_now_keyboard, search_again_keyboard,
-    searching_menu, chat_menu,
+    searching_menu, chat_menu, profile_actions_keyboard,
 )
 from bot import texts
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from apps.analytics.services import track
 
 router = Router()
 logger = logging.getLogger(__name__)
-
-GENDER_LABELS = {
-    'male': '👦 Парень',
-    'female': '👧 Девушка',
-    None: '❓ Не указан',
-}
 
 # ── In-memory per-bot confirmations ──────────────────────────────────────
 _user_bot_confirmations: dict[int, set[str]] = {}
@@ -61,45 +54,18 @@ async def cmd_start(message: Message, bot: Bot):
 
     name = tg_user.first_name or 'Анон'
 
-    if not user.gender:
-        await message.answer(texts.WELCOME.format(name=name))
-        await message.answer(texts.GENDER_ASK, reply_markup=gender_select)
-        await track(telegram_id, 'gender_selection_shown')
+    if created:
+        await message.answer(
+            texts.WELCOME.format(name=name),
+            reply_markup=main_menu,
+        )
     else:
         await message.answer(
             texts.WELCOME_BACK.format(name=name),
             reply_markup=main_menu,
         )
-        await track(telegram_id, 'main_menu_shown')
 
-
-# ═══════════════════════════════════════════════════════════════════════
-#  Gender selection
-# ═══════════════════════════════════════════════════════════════════════
-
-@router.callback_query(F.data.startswith('gender_'))
-async def on_gender_select(callback: CallbackQuery):
-    gender = callback.data.replace('gender_', '')
-    telegram_id = callback.from_user.id
-
-    user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    user.gender = gender
-    await sync_to_async(user.save)(update_fields=['gender'])
-
-    emoji = '👦' if gender == 'male' else '👧'
-    name = callback.from_user.first_name or 'Анон'
-
-    await track(telegram_id, 'gender_selected', gender=gender)
-
-    await callback.message.edit_text(
-        texts.GENDER_SET.format(emoji=emoji),
-    )
-    await callback.message.answer(
-        texts.WELCOME_BACK.format(name=name),
-        reply_markup=main_menu,
-    )
     await track(telegram_id, 'main_menu_shown')
-    await callback.answer()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -173,13 +139,9 @@ async def on_inline_search(callback: CallbackQuery, bot: Bot):
     telegram_id = callback.from_user.id
 
     try:
-        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
+        await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
     except TelegramUser.DoesNotExist:
         await callback.answer('Нажми /start')
-        return
-
-    if not user.gender:
-        await callback.answer('Сначала укажи пол!', show_alert=True)
         return
 
     from bot.services.matchmaking import matchmaking
@@ -221,15 +183,8 @@ async def on_inline_search(callback: CallbackQuery, bot: Bot):
 #  Helpers
 # ═══════════════════════════════════════════════════════════════════════
 
-SEARCH_LABELS = {
-    'male': '👦 Парней',
-    'female': '👧 Девушек',
-    None: '🔀 Всех',
-}
-
-
 async def _build_profile_text(user, telegram_id):
-    """Build the rich profile card text."""
+    """Build the profile card text."""
     from apps.chat.models import ChatSession
     from django.db.models import Q
 
@@ -256,20 +211,10 @@ async def _build_profile_text(user, telegram_id):
 
     return texts.PROFILE.format(
         display_name=user.display_name,
-        gender_label=GENDER_LABELS.get(user.gender),
-        search_label=SEARCH_LABELS.get(user.search_gender),
         chats_count=chats_count,
         likes=likes,
         dislikes=dislikes,
         status_line=status_line,
-    )
-
-
-async def _build_settings_text(user):
-    """Build the settings screen text."""
-    return texts.SETTINGS.format(
-        gender_label=GENDER_LABELS.get(user.gender),
-        search_label=SEARCH_LABELS.get(user.search_gender),
     )
 
 
@@ -290,178 +235,19 @@ async def cmd_profile(message: Message):
 
     await track(telegram_id, 'profile_opened')
 
-    from bot.keyboards import profile_actions_keyboard
     profile_text = await _build_profile_text(user, telegram_id)
     await message.answer(profile_text, reply_markup=profile_actions_keyboard)
 
 
-@router.callback_query(F.data == 'back_to_profile')
-async def on_back_to_profile(callback: CallbackQuery):
-    """Navigate back to profile from settings."""
-    telegram_id = callback.from_user.id
-    try:
-        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    except TelegramUser.DoesNotExist:
-        await callback.answer('Нажми /start')
-        return
-
-    from bot.keyboards import profile_actions_keyboard
-    profile_text = await _build_profile_text(user, telegram_id)
-    await callback.message.edit_text(profile_text, reply_markup=profile_actions_keyboard)
-    await callback.answer()
-
-
 # ═══════════════════════════════════════════════════════════════════════
-#  Settings
+#  Settings (minimal — no gender)
 # ═══════════════════════════════════════════════════════════════════════
 
 @router.message(F.text == '⚙️ Настройки')
 @router.message(F.text == '⚙️ Настройки поиска')
 async def cmd_settings(message: Message):
-    telegram_id = message.from_user.id
-
-    try:
-        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    except TelegramUser.DoesNotExist:
-        await message.answer(texts.NEED_REGISTRATION)
-        return
-
-    await track(telegram_id, 'settings_opened')
-
-    from bot.keyboards import settings_keyboard
-    settings_text = await _build_settings_text(user)
-    await message.answer(settings_text, reply_markup=settings_keyboard)
-
-
-@router.callback_query(F.data == 'open_settings')
-async def on_open_settings(callback: CallbackQuery):
-    """Navigate to settings from profile."""
-    telegram_id = callback.from_user.id
-    try:
-        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    except TelegramUser.DoesNotExist:
-        await callback.answer('Нажми /start')
-        return
-
-    await track(telegram_id, 'settings_opened')
-
-    from bot.keyboards import settings_keyboard
-    settings_text = await _build_settings_text(user)
-    await callback.message.edit_text(settings_text, reply_markup=settings_keyboard)
-    await callback.answer()
-
-
-@router.callback_query(F.data == 'back_to_settings')
-async def on_back_to_settings(callback: CallbackQuery):
-    """Navigate back to settings from sub-screen."""
-    telegram_id = callback.from_user.id
-    try:
-        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    except TelegramUser.DoesNotExist:
-        await callback.answer('Нажми /start')
-        return
-
-    from bot.keyboards import settings_keyboard
-    settings_text = await _build_settings_text(user)
-    await callback.message.edit_text(settings_text, reply_markup=settings_keyboard)
-    await callback.answer()
-
-
-# ── Settings: Change gender ──────────────────────────────────────────────
-
-@router.callback_query(F.data == 'settings_change_gender')
-async def on_settings_change_gender(callback: CallbackQuery):
-    """Show gender selection within settings flow."""
-    telegram_id = callback.from_user.id
-    try:
-        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    except TelegramUser.DoesNotExist:
-        await callback.answer('Нажми /start')
-        return
-
-    await track(telegram_id, 'gender_change_started')
-
-    from bot.keyboards import settings_gender_select
-    await callback.message.edit_text(
-        texts.SETTINGS_GENDER_ASK.format(current=GENDER_LABELS.get(user.gender)),
-        reply_markup=settings_gender_select,
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith('set_gender_'))
-async def on_set_gender(callback: CallbackQuery):
-    """Save gender change from settings."""
-    gender = callback.data.replace('set_gender_', '')
-    telegram_id = callback.from_user.id
-
-    user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    user.gender = gender
-    await sync_to_async(user.save)(update_fields=['gender'])
-
-    emoji = '👦' if gender == 'male' else '👧'
-    await track(telegram_id, 'gender_changed', gender=gender)
-
-    # Show confirmation then return to settings
-    from bot.keyboards import settings_keyboard
-    settings_text = await _build_settings_text(user)
-    await callback.message.edit_text(
-        texts.SETTINGS_GENDER_SAVED.format(emoji=emoji) + '\n\n' + settings_text,
-        reply_markup=settings_keyboard,
-    )
-    await callback.answer('✅ Сохранено')
-
-
-# ── Settings: Change search preference ───────────────────────────────────
-
-@router.callback_query(F.data == 'settings_change_search')
-async def on_settings_change_search(callback: CallbackQuery):
-    """Show search preference selection within settings flow."""
-    telegram_id = callback.from_user.id
-    try:
-        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    except TelegramUser.DoesNotExist:
-        await callback.answer('Нажми /start')
-        return
-
-    await track(telegram_id, 'search_pref_change_started')
-
-    from bot.keyboards import settings_search_select
-    await callback.message.edit_text(
-        texts.SETTINGS_SEARCH_ASK.format(current=SEARCH_LABELS.get(user.search_gender)),
-        reply_markup=settings_search_select,
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith('set_search_'))
-async def on_set_search(callback: CallbackQuery):
-    """Save search preference from settings."""
-    pref = callback.data.replace('set_search_', '')
-    telegram_id = callback.from_user.id
-
-    user = await sync_to_async(TelegramUser.objects.get)(telegram_id=telegram_id)
-    user.search_gender = None if pref == 'any' else pref
-    await sync_to_async(user.save)(update_fields=['search_gender'])
-
-    label = SEARCH_LABELS.get(user.search_gender)
-    await track(telegram_id, 'search_pref_changed', search_gender=pref)
-
-    from bot.keyboards import settings_keyboard
-    settings_text = await _build_settings_text(user)
-    await callback.message.edit_text(
-        texts.SETTINGS_SEARCH_SAVED.format(label=label) + '\n\n' + settings_text,
-        reply_markup=settings_keyboard,
-    )
-    await callback.answer('✅ Сохранено')
-
-
-@router.callback_query(F.data == 'change_gender')
-async def on_change_gender(callback: CallbackQuery):
-    """Legacy change gender callback — redirect to settings flow."""
-    await callback.message.edit_text(texts.GENDER_ASK, reply_markup=gender_select)
-    await callback.answer()
-
+    await track(message.from_user.id, 'settings_opened')
+    await message.answer(texts.SETTINGS, reply_markup=main_menu)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -543,10 +329,9 @@ async def on_bot_done(callback: CallbackQuery):
     )
 
     # Determine progress text
-    total_steps = 3
     has_channels = await sync_to_async(RequiredChannel.objects.filter(is_active=True).exists)()
     current_step = 2 if has_channels else 1
-    progress = f'▪▪▫ Шаг {current_step} из {total_steps}'
+    progress = f'▪▪▫ Шаг {current_step} из 3'
 
     try:
         await callback.message.edit_text(

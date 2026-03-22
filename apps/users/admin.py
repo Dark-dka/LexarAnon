@@ -1,6 +1,5 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from django.utils.translation import gettext_lazy as _
 
 from .models import TelegramUser, Rating, RequiredChannel, RequiredBot, ChannelSubscriptionEvent, ReferralCampaign
 
@@ -30,7 +29,6 @@ class TelegramUserAdmin(admin.ModelAdmin):
         'username',
         'first_name',
         'last_name',
-        'gender',
         'photo_preview',
         'likes_count',
         'dislikes_count',
@@ -39,7 +37,7 @@ class TelegramUserAdmin(admin.ModelAdmin):
         'is_blocked',
         'created_at',
     ]
-    list_filter = ['is_active', 'is_blocked', 'gender', 'created_at', 'campaign', CampaignFilter]
+    list_filter = ['is_active', 'is_blocked', 'created_at', 'campaign', CampaignFilter]
     search_fields = ['telegram_id', 'username', 'first_name', 'last_name']
     readonly_fields = ['telegram_id', 'created_at', 'updated_at', 'photo_large', 'likes_count', 'dislikes_count']
     list_editable = ['is_blocked']
@@ -49,9 +47,6 @@ class TelegramUserAdmin(admin.ModelAdmin):
     fieldsets = (
         ('Telegram данные', {
             'fields': ('telegram_id', 'username', 'first_name', 'last_name', 'language_code'),
-        }),
-        ('Пол и поиск', {
-            'fields': ('gender', 'search_gender'),
         }),
         ('Фото профиля', {
             'fields': ('profile_photo', 'photo_large'),
@@ -64,6 +59,12 @@ class TelegramUserAdmin(admin.ModelAdmin):
         }),
         ('Статус', {
             'fields': ('is_active', 'is_blocked'),
+        }),
+        ('Legacy — пол (не используется)', {
+            'fields': ('gender', 'search_gender'),
+            'classes': ('collapse',),
+            'description': 'Гендерные поля сохранены для совместимости с БД, '
+                           'но больше не используются в интерфейсе бота.',
         }),
         ('Даты', {
             'fields': ('created_at', 'updated_at'),
@@ -144,7 +145,6 @@ class RequiredChannelAdmin(admin.ModelAdmin):
 
     @admin.display(description='Ссылка')
     def invite_link_display(self, obj):
-        from django.utils.html import format_html
         return format_html('<a href="{}" target="_blank">{}</a>', obj.invite_link, obj.invite_link)
 
     @admin.display(description='👥 Подписчиков')
@@ -179,7 +179,6 @@ class RequiredBotAdmin(admin.ModelAdmin):
 
     @admin.display(description='Ссылка')
     def invite_link_display(self, obj):
-        from django.utils.html import format_html
         return format_html('<a href="{}" target="_blank">{}</a>', obj.invite_link, obj.invite_link)
 
 
@@ -230,7 +229,6 @@ class ReferralCampaignAdmin(admin.ModelAdmin):
 
     @admin.display(description='🔗 Ссылка')
     def invite_link_display(self, obj):
-        from django.utils.html import format_html
         from bot.config import BOT_USERNAME
         bot = BOT_USERNAME or 'BOTNAME'
         link = f'https://t.me/{bot}?start=ref_{obj.code}'

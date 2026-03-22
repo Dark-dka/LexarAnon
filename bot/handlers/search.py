@@ -32,10 +32,6 @@ async def search_partner(message: Message, bot: Bot):
         await message.answer(texts.BLOCKED)
         return
 
-    if not user.gender:
-        await message.answer(texts.NEED_GENDER)
-        return
-
     if matchmaking.is_in_chat(telegram_id):
         await message.answer(texts.ALREADY_IN_CHAT)
         return
