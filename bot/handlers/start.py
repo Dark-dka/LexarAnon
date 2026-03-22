@@ -10,7 +10,7 @@ from aiogram.types import Message, CallbackQuery
 from asgiref.sync import sync_to_async
 
 from apps.users.models import TelegramUser, Rating
-from apps.users.models import RequiredChannel, RequiredBot, ChannelSubscriptionEvent
+from apps.users.models import RequiredChannel, RequiredBot, ChannelSubscriptionEvent, BotClickEvent
 from bot.services.user_sync import sync_user
 from bot.keyboards import (
     main_menu, rate_keyboard, subscribe_keyboard,
@@ -24,9 +24,6 @@ from bot.admin.services import touch_activity
 
 router = Router()
 logger = logging.getLogger(__name__)
-
-# ── In-memory per-bot confirmations ──────────────────────────────────────
-_user_bot_confirmations: dict[int, set[str]] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -279,6 +276,8 @@ async def on_check_subscription(callback: CallbackQuery, bot: Bot):
     )
 
     not_subscribed = []
+    check_errors = []
+
     for channel in channels:
         try:
             member = await bot.get_chat_member(
@@ -297,17 +296,45 @@ async def on_check_subscription(callback: CallbackQuery, bot: Bot):
                     channel_username=channel.channel_username,
                     defaults={'channel_title': channel.title},
                 )
-        except (TelegramBadRequest, TelegramForbiddenError):
+        except (TelegramBadRequest, TelegramForbiddenError) as e:
+            error_type = type(e).__name__
+            logger.warning(
+                f'Channel check failed: {channel.channel_username} '
+                f'user={user_id} error={error_type}: {e}'
+            )
             not_subscribed.append(channel)
+            check_errors.append({
+                'channel': channel.channel_username,
+                'error_type': error_type,
+            })
+            await track(
+                user_id, 'required_channel_check_failed',
+                channel_username=channel.channel_username,
+                error_type=error_type,
+            )
         except Exception as e:
-            logger.warning(f'Subscription check error for {channel.channel_username}: {e}')
+            error_type = type(e).__name__
+            logger.error(
+                f'Unexpected channel check error: {channel.channel_username} '
+                f'user={user_id} error={error_type}: {e}'
+            )
             not_subscribed.append(channel)
+            check_errors.append({
+                'channel': channel.channel_username,
+                'error_type': error_type,
+            })
+            await track(
+                user_id, 'required_channel_check_failed',
+                channel_username=channel.channel_username,
+                error_type=error_type,
+            )
 
     if not_subscribed:
+        if check_errors:
+            await track(user_id, 'required_channels_failed', errors=len(check_errors))
         await callback.answer(texts.SUBSCRIPTION_NOT_YET, show_alert=True)
     else:
         await track(user_id, 'required_channels_passed')
-
         await callback.message.edit_text(texts.SUBSCRIPTION_VERIFIED)
         await callback.answer('✅')
 
@@ -318,14 +345,39 @@ async def on_check_subscription(callback: CallbackQuery, bot: Bot):
 
 @router.callback_query(F.data.startswith('bot_done_'))
 async def on_bot_done(callback: CallbackQuery):
-    """Individual bot confirmation."""
+    """Individual bot mark — saves click to DB (persistent)."""
     user_id = callback.from_user.id
     bot_username = callback.data.replace('bot_done_', '')
 
-    confirmed = _user_bot_confirmations.setdefault(user_id, set())
-    confirmed.add(bot_username)
+    # Get or create DB user
+    try:
+        tg_user = await sync_to_async(TelegramUser.objects.get)(telegram_id=user_id)
+    except TelegramUser.DoesNotExist:
+        await callback.answer('Нажми /start', show_alert=True)
+        return
+
+    # Save click to DB (persistent, survives restart)
+    from django.utils import timezone
+    click, created = await sync_to_async(
+        BotClickEvent.objects.get_or_create
+    )(
+        user=tg_user,
+        bot_username=bot_username,
+        defaults={'self_confirmed_at': timezone.now()},
+    )
+    if not click.self_confirmed_at:
+        click.self_confirmed_at = timezone.now()
+        await sync_to_async(click.save)(update_fields=['self_confirmed_at'])
 
     await track(user_id, 'required_bot_confirmed', bot_username=bot_username)
+
+    # Reload confirmed set from DB
+    confirmed = set(await sync_to_async(list)(
+        BotClickEvent.objects.filter(
+            user=tg_user,
+            self_confirmed_at__isnull=False,
+        ).values_list('bot_username', flat=True)
+    ))
 
     bots = await sync_to_async(list)(
         RequiredBot.objects.filter(is_active=True)
@@ -344,40 +396,47 @@ async def on_bot_done(callback: CallbackQuery):
     except TelegramBadRequest:
         pass
 
-    await callback.answer(f'✅ {bot_username} подтверждён')
+    await callback.answer(f'✅ {bot_username} отмечен')
 
 
 @router.callback_query(F.data == 'check_bots')
 async def on_check_bots(callback: CallbackQuery):
-    """Final check — all bots must be individually confirmed."""
+    """Final check — all bots must be individually marked in DB."""
     user_id = callback.from_user.id
-    confirmed = _user_bot_confirmations.get(user_id, set())
+
+    try:
+        tg_user = await sync_to_async(TelegramUser.objects.get)(telegram_id=user_id)
+    except TelegramUser.DoesNotExist:
+        await callback.answer('Нажми /start', show_alert=True)
+        return
 
     bots = await sync_to_async(list)(
         RequiredBot.objects.filter(is_active=True)
     )
 
     required_usernames = {b.bot_username.lstrip('@') for b in bots}
+
+    # Check DB for confirmed clicks
+    confirmed = set(await sync_to_async(list)(
+        BotClickEvent.objects.filter(
+            user=tg_user,
+            self_confirmed_at__isnull=False,
+        ).values_list('bot_username', flat=True)
+    ))
+
     missing = required_usernames - confirmed
 
     if missing:
-        missing_list = ', '.join(f'@{u}' for u in missing)
-        await callback.answer(
-            f'❌ Не подтверждено: {missing_list}\nОткрой и запусти каждого бота!',
-            show_alert=True,
-        )
+        await callback.answer(texts.BOTS_NOT_ALL_CLICKED, show_alert=True)
         return
 
-    # Save timestamp
+    # Save bots_confirmed_at timestamp
     try:
         from django.utils import timezone
-        user = await sync_to_async(TelegramUser.objects.get)(telegram_id=user_id)
-        user.bots_confirmed_at = timezone.now()
-        await sync_to_async(user.save)(update_fields=['bots_confirmed_at'])
+        tg_user.bots_confirmed_at = timezone.now()
+        await sync_to_async(tg_user.save)(update_fields=['bots_confirmed_at'])
     except Exception as e:
         logger.warning(f'Could not save bots_confirmed_at: {e}')
-
-    _user_bot_confirmations.pop(user_id, None)
 
     await track(user_id, 'required_bots_passed')
 

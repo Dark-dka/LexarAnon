@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from .models import TelegramUser, Rating, RequiredChannel, RequiredBot, ChannelSubscriptionEvent, ReferralCampaign
+from .models import TelegramUser, Rating, RequiredChannel, RequiredBot, ChannelSubscriptionEvent, ReferralCampaign, BotClickEvent
 
 
 class CampaignFilter(admin.SimpleListFilter):
@@ -197,6 +197,20 @@ class ChannelSubscriptionEventAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         return False
 
+
+@admin.register(BotClickEvent)
+class BotClickEventAdmin(admin.ModelAdmin):
+    list_display = ['user', 'bot_username', 'clicked_at', 'self_confirmed_at']
+    list_filter = ['bot_username', 'clicked_at', 'self_confirmed_at']
+    search_fields = ['bot_username', 'user__username', 'user__telegram_id']
+    readonly_fields = ['user', 'bot_username', 'clicked_at', 'self_confirmed_at']
+    list_per_page = 100
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 @admin.register(ReferralCampaign)
 class ReferralCampaignAdmin(admin.ModelAdmin):

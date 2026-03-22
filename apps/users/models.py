@@ -291,6 +291,46 @@ class ChannelSubscriptionEvent(models.Model):
         return f'{self.user} → {self.channel_title} ({self.channel_username})'
 
 
+class BotClickEvent(models.Model):
+    """
+    Persistent per-bot click/confirm tracking.
+    Honestly separates: clicked (opened link) vs self_confirmed (user said they started).
+    No field is called 'verified' because there is no real server-side verification.
+    """
+
+    user = models.ForeignKey(
+        TelegramUser,
+        on_delete=models.CASCADE,
+        related_name='bot_clicks',
+        verbose_name='Пользователь',
+    )
+    bot_username = models.CharField(
+        max_length=255,
+        verbose_name='Username бота',
+        db_index=True,
+    )
+    clicked_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Когда кликнул',
+    )
+    self_confirmed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Когда подтвердил',
+        help_text='Пользователь сам нажал "Отметить ✓". Это НЕ серверная верификация.',
+    )
+
+    class Meta:
+        verbose_name = 'Клик по боту'
+        verbose_name_plural = 'Клики по ботам'
+        ordering = ['-clicked_at']
+        unique_together = ['user', 'bot_username']
+
+    def __str__(self):
+        status = '✅' if self.self_confirmed_at else '👆'
+        return f'{status} {self.user} → {self.bot_username}'
+
+
 class ReferralCampaign(models.Model):
     """
     Admin-created referral campaign for tracking ad sources.
