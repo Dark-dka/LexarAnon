@@ -130,6 +130,7 @@ async def on_users_search_prompt(callback: CallbackQuery, state: FSMContext):
     AdminFilter(),
     StateFilter(
         'admin_user_search',
+        'admin_chat_search',
         AddChannelFSM.title, AddChannelFSM.username, AddChannelFSM.invite_link,
         AddBotFSM.title, AddBotFSM.username, AddBotFSM.invite_link,
         AddCampaignFSM.name, AddCampaignFSM.description, AddCampaignFSM.code,
@@ -141,6 +142,8 @@ async def on_admin_text_input(message: Message, state: FSMContext):
 
     if current == 'admin_user_search':
         await _handle_user_search(message, state)
+    elif current == 'admin_chat_search':
+        await _handle_chat_search(message, state)
     elif current == AddChannelFSM.title:
         await _handle_channel_title(message, state)
     elif current == AddChannelFSM.username:
@@ -179,6 +182,27 @@ async def _handle_user_search(message: Message, state: FSMContext):
     )] for u in users]
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='adm:users')])
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+async def _handle_chat_search(message: Message, state: FSMContext):
+    query = message.text.strip()
+    await state.update_data(chat_search_query=query)
+    await state.clear()
+
+    chats, total = await services.search_chats(query)
+
+    if not chats:
+        await message.answer(
+            f'🔍 Ничего не найдено по запросу: <code>{query}</code>',
+            reply_markup=kb.back_button('adm:chats'),
+        )
+        return
+
+    await state.set_data({'chat_search_query': query})
+    await message.answer(
+        f'🔍 Результаты: <b>{total}</b>\nЗапрос: <code>{query}</code>\n\n<i>Нажми на чат 👇</i>',
+        reply_markup=kb.chats_list_kb(chats, 'adm:chats:search_results', 0, total, PAGE_SIZE),
+    )
 
 
 @router.callback_query(F.data.regexp(r'^adm:users:(\w+):(\d+)$'), AdminFilter())
@@ -546,11 +570,12 @@ async def _handle_bot_link(message: Message, state: FSMContext):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  💬 Chats
+#  💬 Chats — menu, list, card, history, search
 # ═══════════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data == 'adm:chats', AdminFilter())
-async def on_chats_menu(callback: CallbackQuery):
+async def on_chats_menu(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     from apps.chat.models import ChatSession
     active = await sync_to_async(ChatSession.objects.filter(status='active').count)()
     closed = await sync_to_async(ChatSession.objects.filter(status='closed').count)()
@@ -570,20 +595,175 @@ async def on_chats_list(callback: CallbackQuery):
     chats, total = await services.get_chats_list(status, page, PAGE_SIZE)
 
     label = '🟢 Активные' if status == 'active' else '🔴 Завершённые'
-    lines = [f'{label} — <b>{total}</b>\n']
+    header = f'{label} — <b>{total}</b>\n\n<i>Нажми на чат, чтобы открыть 👇</i>'
 
-    for s in chats:
-        u1 = await sync_to_async(lambda: s.user1.display_name)()
-        u2 = await sync_to_async(lambda: s.user2.display_name)()
-        date = s.created_at.strftime('%d.%m %H:%M')
-        msgs = await sync_to_async(s.messages.count)()
-        lines.append(f'• {date} | {u1} ↔ {u2} | 💬{msgs}')
+    if not chats:
+        header = f'{label} — <b>0</b>\n\n<i>Нет чатов</i>'
 
-    text = '\n'.join(lines)
+    await callback.message.edit_text(
+        header,
+        reply_markup=kb.chats_list_kb(chats, f'adm:chats:{status}', page, total, PAGE_SIZE),
+    )
+    await callback.answer()
+
+
+# ── Chat detail card ─────────────────────────────────────────────────────
+
+@router.callback_query(F.data.regexp(r'^adm:chat:(\d+)$'), AdminFilter())
+async def on_chat_detail(callback: CallbackQuery):
+    session_id = int(callback.data.split(':')[-1])
+    data = await services.get_chat_detail(session_id)
+
+    if not data:
+        await callback.answer('Чат не найден', show_alert=True)
+        return
+
+    status_icon = '🟢' if data['status'] == 'Активен' else '🔴'
+    report_line = f'🚨 Жалобы: <b>{data["report_count"]}</b>' if data['report_count'] else ''
+
+    text = (
+        f'💬 <b>Чат #{session_id}</b>\n'
+        f'\n'
+        f'{status_icon} Статус: <b>{data["status"]}</b>\n'
+        f'👤 User 1: <b>{data["user1_name"]}</b> ({data["user1_tid"]})\n'
+        f'👤 User 2: <b>{data["user2_name"]}</b> ({data["user2_tid"]})\n'
+        f'\n'
+        f'📅 Начало: {data["created_at"]}\n'
+        f'📅 Конец: {data["ended_at"]}\n'
+        f'⏱ Длительность: {data["duration"]}\n'
+        f'\n'
+        f'💬 Сообщений: <b>{data["msg_count"]}</b>\n'
+        f'🖼 Медиа: <b>{data["media_count"]}</b>\n'
+    )
+    if report_line:
+        text += f'{report_line}\n'
 
     await callback.message.edit_text(
         text,
-        reply_markup=kb.pagination_kb(f'adm:chats:{status}', page, total, PAGE_SIZE, 'adm:chats'),
+        reply_markup=kb.chat_card_kb(session_id, data['user1_tid'], data['user2_tid']),
+    )
+    await callback.answer()
+
+
+# ── Chat message history ─────────────────────────────────────────────────
+
+MSG_PAGE_SIZE = 15
+
+MEDIA_ICONS = {
+    'photo': '📸 Фото',
+    'video': '🎬 Видео',
+    'voice': '🎤 Голосовое',
+    'document': '📄 Документ',
+    'sticker': '🏷 Стикер',
+    'video_note': '⚪ Кружок',
+}
+
+
+@router.callback_query(F.data.regexp(r'^adm:chat_hist:(\d+):(\d+)$'), AdminFilter())
+async def on_chat_history(callback: CallbackQuery):
+    parts = callback.data.split(':')
+    session_id = int(parts[2])
+    page = int(parts[3])
+
+    messages, total = await services.get_chat_messages(session_id, page, MSG_PAGE_SIZE)
+
+    if not messages and page == 0:
+        await callback.answer('В этом чате нет сообщений', show_alert=True)
+        return
+
+    # Get user info for the session
+    detail = await services.get_chat_detail(session_id)
+    u1_tid = detail['user1_tid'] if detail else 0
+
+    total_pages = (total + MSG_PAGE_SIZE - 1) // MSG_PAGE_SIZE
+    lines = [f'📜 <b>Чат #{session_id}</b> — стр. {page + 1}/{total_pages}\n']
+
+    for msg in messages:
+        time_str = msg.created_at.strftime('%H:%M')
+        sender_name = await sync_to_async(lambda m=msg: m.sender.display_name)()
+        sender_tid = await sync_to_async(lambda m=msg: m.sender.telegram_id)()
+
+        # Determine side indicator
+        side = '🔵' if sender_tid == u1_tid else '🟠'
+
+        if msg.message_type == 'text':
+            text_preview = msg.text or '—'
+            if len(text_preview) > 200:
+                text_preview = text_preview[:200] + '…'
+            lines.append(f'[{time_str}] {side} {sender_name}:\n{text_preview}\n')
+        else:
+            media_label = MEDIA_ICONS.get(msg.message_type, f'📎 {msg.message_type}')
+            caption = ''
+            if msg.text:
+                cap = msg.text[:100] + ('…' if len(msg.text) > 100 else '')
+                caption = f'\n<i>{cap}</i>'
+            lines.append(f'[{time_str}] {side} {sender_name}:\n{media_label}{caption}\n')
+
+    text = '\n'.join(lines)
+
+    # Truncate if too long for Telegram (4096 limit)
+    if len(text) > 4000:
+        text = text[:3950] + '\n\n<i>... обрезано</i>'
+
+    # Build navigation keyboard
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text='◀️', callback_data=f'adm:chat_hist:{session_id}:{page - 1}'))
+    nav_buttons.append(InlineKeyboardButton(text=f'{page + 1}/{total_pages}', callback_data='noop'))
+    if (page + 1) * MSG_PAGE_SIZE < total:
+        nav_buttons.append(InlineKeyboardButton(text='▶️', callback_data=f'adm:chat_hist:{session_id}:{page + 1}'))
+
+    rows = [nav_buttons]
+    rows.append([InlineKeyboardButton(text='⬆️ К карточке чата', callback_data=f'adm:chat:{session_id}')])
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
+# Noop callback (for page counter display)
+@router.callback_query(F.data == 'noop', AdminFilter())
+async def on_noop(callback: CallbackQuery):
+    await callback.answer()
+
+
+# ── Chat search ──────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == 'adm:chats:search', AdminFilter())
+async def on_chat_search_prompt(callback: CallbackQuery, state: FSMContext):
+    await state.set_state('admin_chat_search')
+    await callback.message.edit_text(
+        '🔍 <b>Поиск чата</b>\n\n'
+        'Введи:\n'
+        '• ID чата (например <code>42</code>)\n'
+        '• Telegram ID пользователя\n'
+        '• @username пользователя',
+        reply_markup=kb.back_button('adm:chats'),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r'^adm:chats:search_results:(\d+)$'), AdminFilter())
+async def on_chat_search_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(':')[-1])
+    data = await state.get_data()
+    query = data.get('chat_search_query', '')
+    if not query:
+        await callback.answer('Нет запроса', show_alert=True)
+        return
+
+    chats, total = await services.search_chats(query, page, PAGE_SIZE)
+
+    if not chats:
+        await callback.answer('Ничего не найдено', show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        f'🔍 Результаты: <b>{total}</b>\nЗапрос: <code>{query}</code>\n\n<i>Нажми на чат 👇</i>',
+        reply_markup=kb.chats_list_kb(chats, 'adm:chats:search_results', page, total, PAGE_SIZE),
     )
     await callback.answer()
 

@@ -60,8 +60,42 @@ chats_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text='🟢 Активные', callback_data='adm:chats:active:0'),
         InlineKeyboardButton(text='🔴 Завершённые', callback_data='adm:chats:closed:0'),
     ],
+    [InlineKeyboardButton(text='🔍 Найти чат', callback_data='adm:chats:search')],
     [InlineKeyboardButton(text='⬅️ Меню', callback_data='adm:menu')],
 ])
+
+
+def chats_list_kb(chats: list, prefix: str, page: int, total: int,
+                  per_page: int = PER_PAGE) -> InlineKeyboardMarkup:
+    """Clickable chat list with pagination."""
+    rows = []
+    for s in chats:
+        label = f'#{s.id} | {s.user1.display_name} ↔ {s.user2.display_name}'
+        rows.append([InlineKeyboardButton(text=label, callback_data=f'adm:chat:{s.id}')])
+
+    # Pagination
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text='◀️', callback_data=f'{prefix}:{page - 1}'))
+    if (page + 1) * per_page < total:
+        nav.append(InlineKeyboardButton(text='▶️', callback_data=f'{prefix}:{page + 1}'))
+    if nav:
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton(text='⬅️ Чаты', callback_data='adm:chats')])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def chat_card_kb(session_id: int, user1_tid: int, user2_tid: int) -> InlineKeyboardMarkup:
+    """Buttons for individual chat card."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='📜 История переписки', callback_data=f'adm:chat_hist:{session_id}:0')],
+        [
+            InlineKeyboardButton(text='👤 User 1', callback_data=f'adm:user:card:{user1_tid}'),
+            InlineKeyboardButton(text='👤 User 2', callback_data=f'adm:user:card:{user2_tid}'),
+        ],
+        [InlineKeyboardButton(text='⬅️ Чаты', callback_data='adm:chats')],
+    ])
 
 
 # ── Funnel periods ──────────────────────────────────────────────────────

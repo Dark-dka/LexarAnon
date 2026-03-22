@@ -166,6 +166,95 @@ async def get_chats_list(status: str, page: int = 0, per_page: int = 8) -> tuple
     return await sync_to_async(_q)()
 
 
+async def get_chat_detail(session_id: int) -> dict | None:
+    """Get full chat card data."""
+    from apps.chat.models import Message as Msg
+
+    def _q():
+        try:
+            s = ChatSession.objects.select_related('user1', 'user2').get(pk=session_id)
+        except ChatSession.DoesNotExist:
+            return None
+
+        msg_count = s.messages.count()
+        media_count = s.messages.exclude(message_type='text').exclude(message_type='sticker').count()
+
+        report_count = 0
+        try:
+            report_count = Report.objects.filter(chat_session=s).count()
+        except Exception:
+            pass
+
+        duration = None
+        if s.ended_at and s.created_at:
+            delta = s.ended_at - s.created_at
+            minutes = int(delta.total_seconds() // 60)
+            seconds = int(delta.total_seconds() % 60)
+            duration = f'{minutes}м {seconds}с'
+
+        return {
+            'session': s,
+            'user1_name': s.user1.display_name,
+            'user2_name': s.user2.display_name,
+            'user1_tid': s.user1.telegram_id,
+            'user2_tid': s.user2.telegram_id,
+            'status': s.get_status_display(),
+            'created_at': s.created_at.strftime('%d.%m.%Y %H:%M'),
+            'ended_at': s.ended_at.strftime('%d.%m.%Y %H:%M') if s.ended_at else '—',
+            'duration': duration or '—',
+            'msg_count': msg_count,
+            'media_count': media_count,
+            'report_count': report_count,
+        }
+
+    return await sync_to_async(_q)()
+
+
+async def get_chat_messages(session_id: int, page: int = 0, per_page: int = 15) -> tuple[list, int]:
+    """Get paginated messages for a chat session."""
+    from apps.chat.models import Message as Msg
+
+    def _q():
+        qs = Msg.objects.filter(
+            chat_session_id=session_id,
+        ).select_related('sender').order_by('created_at')
+        total = qs.count()
+        items = list(qs[page * per_page:(page + 1) * per_page])
+        return items, total
+
+    return await sync_to_async(_q)()
+
+
+async def search_chats(query: str, page: int = 0, per_page: int = 8) -> tuple[list, int]:
+    """Search chats by session ID, telegram_id, or username."""
+    def _q():
+        qs = ChatSession.objects.select_related('user1', 'user2').order_by('-created_at')
+
+        # Try numeric — session ID or telegram_id
+        if query.isdigit():
+            num = int(query)
+            qs = qs.filter(
+                Q(pk=num) |
+                Q(user1__telegram_id=num) |
+                Q(user2__telegram_id=num)
+            )
+        else:
+            # Username search (strip @)
+            clean = query.lstrip('@').lower()
+            qs = qs.filter(
+                Q(user1__username__icontains=clean) |
+                Q(user2__username__icontains=clean) |
+                Q(user1__first_name__icontains=clean) |
+                Q(user2__first_name__icontains=clean)
+            )
+
+        total = qs.count()
+        items = list(qs[page * per_page:(page + 1) * per_page])
+        return items, total
+
+    return await sync_to_async(_q)()
+
+
 async def get_reports_list(page: int = 0, per_page: int = 8) -> tuple[list, int]:
     """Get paginated reports."""
     def _q():
