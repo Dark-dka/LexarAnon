@@ -11,11 +11,13 @@ from aiogram.fsm.context import FSMContext
 from asgiref.sync import sync_to_async
 
 from bot.admin.filters import AdminFilter, is_admin
-from bot.admin.states import AddChannelFSM, AddBotFSM
+from bot.admin.states import AddChannelFSM, AddBotFSM, AddCampaignFSM
 from bot.admin import keyboards as kb
 from bot.admin import services
+from bot.admin import referral_services as ref_svc
 
-from apps.users.models import TelegramUser, RequiredChannel, RequiredBot
+from apps.users.models import TelegramUser, RequiredChannel, RequiredBot, ReferralCampaign
+from bot.config import BOT_USERNAME
 from bot.services.matchmaking import matchmaking
 
 router = Router()
@@ -130,6 +132,7 @@ async def on_users_search_prompt(callback: CallbackQuery, state: FSMContext):
         'admin_user_search',
         AddChannelFSM.title, AddChannelFSM.username, AddChannelFSM.invite_link,
         AddBotFSM.title, AddBotFSM.username, AddBotFSM.invite_link,
+        AddCampaignFSM.name, AddCampaignFSM.description, AddCampaignFSM.code,
     ),
 )
 async def on_admin_text_input(message: Message, state: FSMContext):
@@ -150,6 +153,12 @@ async def on_admin_text_input(message: Message, state: FSMContext):
         await _handle_bot_username(message, state)
     elif current == AddBotFSM.invite_link:
         await _handle_bot_link(message, state)
+    elif current == AddCampaignFSM.name:
+        await _handle_campaign_name(message, state)
+    elif current == AddCampaignFSM.description:
+        await _handle_campaign_desc(message, state)
+    elif current == AddCampaignFSM.code:
+        await _handle_campaign_code(message, state)
 
 
 async def _handle_user_search(message: Message, state: FSMContext):
@@ -695,3 +704,322 @@ async def on_funnel_data(callback: CallbackQuery):
 
     await callback.message.edit_text(text, reply_markup=kb.funnel_menu)
     await callback.answer()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  🔗 Referrals
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == 'adm:refs', AdminFilter())
+async def on_refs_menu(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    total = await sync_to_async(ReferralCampaign.objects.count)()
+    await callback.message.edit_text(
+        f'🔗 <b>Рефералы</b> — {total} кампаний\n\nВыбери действие 👇',
+        reply_markup=kb.referrals_menu,
+    )
+    await callback.answer()
+
+
+# ── Campaign list ────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith('adm:refs:list:'), AdminFilter())
+async def on_refs_list(callback: CallbackQuery):
+    page = int(callback.data.split(':')[-1])
+    items, total = await ref_svc.get_campaign_list(page, PAGE_SIZE)
+
+    lines = [f'📋 <b>Кампании</b> — {total}\n']
+
+    for d in items:
+        c = d['campaign']
+        status = '🟢' if c.is_active else '🔴'
+        lines.append(
+            f'{status} <b>{c.name}</b> [{c.code}]\n'
+            f'   👥 {d["total_users"]} · 🟢 {d["alive"]} · '
+            f'💬 {d["first_chat"]} · 📈 {d["conversion"]}%'
+        )
+
+    text = '\n'.join(lines) if items else '📋 Кампаний нет.'
+
+    # Build buttons for each campaign
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    rows = [[InlineKeyboardButton(
+        text=f'{"🟢" if d["campaign"].is_active else "🔴"} {d["campaign"].name}',
+        callback_data=f'adm:refs:card:{d["campaign"].id}',
+    )] for d in items]
+
+    # Pagination
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text='◀️', callback_data=f'adm:refs:list:{page - 1}'))
+    if (page + 1) * PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton(text='▶️', callback_data=f'adm:refs:list:{page + 1}'))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='adm:refs')])
+
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await callback.answer()
+
+
+# ── Campaign card ────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith('adm:refs:card:'), AdminFilter())
+async def on_refs_card(callback: CallbackQuery):
+    cid = int(callback.data.split(':')[-1])
+    data = await ref_svc.get_campaign_card(cid)
+    if not data:
+        await callback.answer('Не найдена', show_alert=True)
+        return
+
+    c = data['campaign']
+    f = data['funnel']
+    bot_name = BOT_USERNAME or 'BOT'
+    link = f'https://t.me/{bot_name}?start=ref_{c.code}'
+
+    # Quality bar
+    q = data['quality']
+    q_bar = '🟢' if q >= 60 else '🟡' if q >= 30 else '🔴'
+
+    text = (
+        f'🔗 <b>{c.name}</b>\n'
+        f'📎 <code>{c.code}</code> · {"🟢 Активна" if c.is_active else "🔴 Выключена"}\n'
+        f'📅 Создана: {c.created_at:%d.%m.%Y}\n'
+        f'\n'
+        f'👥 <b>Пользователи</b>\n'
+        f'   Всего: <b>{data["total"]}</b>\n'
+        f'   🆕 Сегодня: {data["new_1d"]} · 7д: {data["new_7d"]} · 30д: {data["new_30d"]}\n'
+        f'\n'
+        f'📡 <b>Активность</b>\n'
+        f'   🟢 Живые 24ч: {data["alive_1d"]} · 7д: {data["alive_7d"]}\n'
+        f'   💀 Мёртвые 3д+: {data["dead_3d"]} · 30д+: {data["dead_30d"]}\n'
+        f'\n'
+        f'📈 <b>Воронка</b>\n'
+        f'   📢 Каналы: {f.get("required_channels_passed", 0)}\n'
+        f'   🤖 Боты: {f.get("required_bots_passed", 0)}\n'
+        f'   🔍 Поиск: {f.get("search_started", 0)}\n'
+        f'   🤝 Match: {f.get("match_found", 0)}\n'
+        f'   💬 Чат: {f.get("chat_started", 0)}\n'
+        f'   🔄 Возврат: {f.get("next_search_started", 0)}\n'
+        f'\n'
+        f'⚡ <b>Качество</b>\n'
+        f'   {q_bar} Score: <b>{q}/100</b>\n'
+        f'   💬 Ср. чатов: {data["avg_chats"]}\n'
+        f'   🚨 Жалоб отправлено: {data["reports_sent"]} / получено: {data["reports_received"]}'
+    )
+
+    await callback.message.edit_text(text, reply_markup=kb.campaign_card_kb(cid, c.is_active))
+    await callback.answer()
+
+
+# ── Campaign link ────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith('adm:refs:link:'), AdminFilter())
+async def on_refs_link(callback: CallbackQuery):
+    cid = int(callback.data.split(':')[-1])
+    c = await sync_to_async(ReferralCampaign.objects.get)(id=cid)
+    bot_name = BOT_USERNAME or 'BOT'
+    link = f'https://t.me/{bot_name}?start=ref_{c.code}'
+
+    await callback.message.edit_text(
+        f'🔗 <b>{c.name}</b>\n\n'
+        f'Реферальная ссылка:\n<code>{link}</code>\n\n'
+        f'Нажми — скопируется.',
+        reply_markup=kb.back_button(f'adm:refs:card:{cid}'),
+    )
+    await callback.answer()
+
+
+# ── Toggle campaign ──────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith('adm:refs:toggle:'), AdminFilter())
+async def on_refs_toggle(callback: CallbackQuery):
+    cid = int(callback.data.split(':')[-1])
+
+    def _t():
+        c = ReferralCampaign.objects.get(id=cid)
+        c.is_active = not c.is_active
+        c.save(update_fields=['is_active'])
+        return c.is_active
+
+    new = await sync_to_async(_t)()
+    await callback.answer(f'{"🟢 Включена" if new else "🔴 Выключена"}', show_alert=True)
+    callback.data = f'adm:refs:card:{cid}'
+    await on_refs_card(callback)
+
+
+# ── Campaign users ───────────────────────────────────────────────────────
+
+@router.callback_query(F.data.regexp(r'^adm:refs:users:(\d+):(\d+)$'), AdminFilter())
+async def on_refs_users(callback: CallbackQuery):
+    parts = callback.data.split(':')
+    cid = int(parts[3])
+    page = int(parts[4])
+
+    users, total = await ref_svc.get_campaign_users(cid, page, PAGE_SIZE)
+
+    c = await sync_to_async(ReferralCampaign.objects.get)(id=cid)
+    lines = [f'👥 <b>Юзеры — {c.name}</b> ({total})\n']
+
+    for u in users:
+        act = ''
+        if u.last_activity_at:
+            act = f' · {u.last_activity_at:%d.%m %H:%M}'
+        lines.append(f'• <code>{u.telegram_id}</code> {u.display_name}{act}')
+
+    text = '\n'.join(lines) if users else 'Пусто.'
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb.pagination_kb(
+            f'adm:refs:users:{cid}', page, total, PAGE_SIZE,
+            back_cb=f'adm:refs:card:{cid}',
+        ),
+    )
+    await callback.answer()
+
+
+# ── Campaign funnel ──────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith('adm:refs:funnel:'), AdminFilter())
+async def on_refs_funnel_menu(callback: CallbackQuery):
+    cid = int(callback.data.split(':')[-1])
+    c = await sync_to_async(ReferralCampaign.objects.get)(id=cid)
+    await callback.message.edit_text(
+        f'📈 <b>Воронка — {c.name}</b>\n\nВыбери период 👇',
+        reply_markup=kb.campaign_funnel_periods_kb(cid),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r'^adm:refs:fnl:(\d+):(\d+)$'), AdminFilter())
+async def on_refs_funnel_data(callback: CallbackQuery):
+    parts = callback.data.split(':')
+    cid = int(parts[3])
+    days = int(parts[4])
+
+    stages = await ref_svc.get_campaign_funnel(cid, days)
+    c = await sync_to_async(ReferralCampaign.objects.get)(id=cid)
+
+    period = {0: 'Всё время', 7: '7 дней', 30: '30 дней'}.get(days, f'{days}д')
+    lines = [f'📈 <b>Воронка — {c.name} — {period}</b>\n']
+
+    first_count = stages[0][1] if stages else 0
+
+    for i, (label, count) in enumerate(stages):
+        if i > 0 and stages[i - 1][1] > 0:
+            conv_prev = round(count / stages[i - 1][1] * 100, 1)
+        else:
+            conv_prev = 100.0
+
+        if first_count > 0:
+            conv_start = round(count / first_count * 100, 1)
+        else:
+            conv_start = 0
+
+        bar = '█' * max(1, int(conv_start / 10))
+        lines.append(
+            f'{bar} <b>{count}</b> — {label}\n'
+            f'   <i>{conv_prev}% от пред. · {conv_start}% от старта</i>'
+        )
+
+    text = '\n'.join(lines)
+
+    await callback.message.edit_text(text, reply_markup=kb.campaign_funnel_periods_kb(cid))
+    await callback.answer()
+
+
+# ── Top campaigns ────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == 'adm:refs:top', AdminFilter())
+async def on_refs_top(callback: CallbackQuery):
+    top = await ref_svc.get_top_campaigns(5)
+
+    lines = ['🏆 <b>Топ кампаний</b>\n']
+
+    lines.append('<b>👥 По пользователям:</b>')
+    for i, d in enumerate(top['by_users'], 1):
+        lines.append(f'  {i}. {d["campaign"].name} — {d["total"]}')
+
+    lines.append('\n<b>🟢 По живым:</b>')
+    for i, d in enumerate(top['by_alive'], 1):
+        lines.append(f'  {i}. {d["campaign"].name} — {d["alive"]}')
+
+    lines.append('\n<b>💬 По чатам:</b>')
+    for i, d in enumerate(top['by_chats'], 1):
+        lines.append(f'  {i}. {d["campaign"].name} — {d["chats"]} ({d["conv"]}%)')
+
+    lines.append('\n<b>⚡ По качеству:</b>')
+    for i, d in enumerate(top['by_quality'], 1):
+        lines.append(f'  {i}. {d["campaign"].name} — {d["quality"]}/100')
+
+    text = '\n'.join(lines)
+
+    await callback.message.edit_text(text, reply_markup=kb.back_button('adm:refs'))
+    await callback.answer()
+
+
+# ── Create campaign FSM ──────────────────────────────────────────────────
+
+@router.callback_query(F.data == 'adm:refs:add', AdminFilter())
+async def on_refs_add(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AddCampaignFSM.name)
+    await callback.message.edit_text(
+        '➕ <b>Создать кампанию</b>\n\n'
+        'Введи название (напр. Instagram, VK, Телеграм-канал):',
+        reply_markup=kb.back_button('adm:refs'),
+    )
+    await callback.answer()
+
+
+async def _handle_campaign_name(message: Message, state: FSMContext):
+    await state.update_data(name=message.text.strip())
+    await state.set_state(AddCampaignFSM.description)
+    await message.answer(
+        'Введи описание (или отправь <b>-</b> чтобы пропустить):',
+    )
+
+
+async def _handle_campaign_desc(message: Message, state: FSMContext):
+    desc = '' if message.text.strip() == '-' else message.text.strip()
+    await state.update_data(description=desc)
+    await state.set_state(AddCampaignFSM.code)
+    await message.answer(
+        'Введи код для ссылки (латиница, цифры) или отправь <b>-</b> для автогенерации:',
+    )
+
+
+async def _handle_campaign_code(message: Message, state: FSMContext):
+    data = await state.get_data()
+    await state.clear()
+
+    import uuid
+    code_input = message.text.strip()
+    code = code_input if code_input != '-' else uuid.uuid4().hex[:10]
+
+    # Check uniqueness
+    exists = await sync_to_async(
+        ReferralCampaign.objects.filter(code=code).exists
+    )()
+    if exists:
+        await message.answer(
+            f'❌ Код <code>{code}</code> уже занят. Попробуй /begu → Рефералы → Создать снова.',
+        )
+        return
+
+    c = await sync_to_async(ReferralCampaign.objects.create)(
+        name=data['name'],
+        description=data.get('description', ''),
+        code=code,
+    )
+
+    bot_name = BOT_USERNAME or 'BOT'
+    link = f'https://t.me/{bot_name}?start=ref_{c.code}'
+
+    await message.answer(
+        f'✅ Кампания <b>{c.name}</b> создана!\n\n'
+        f'📎 Код: <code>{c.code}</code>\n'
+        f'🔗 Ссылка:\n<code>{link}</code>',
+        reply_markup=kb.back_button('adm:refs'),
+    )
+

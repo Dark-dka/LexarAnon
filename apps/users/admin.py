@@ -200,11 +200,21 @@ class ChannelSubscriptionEventAdmin(admin.ModelAdmin):
 
 @admin.register(ReferralCampaign)
 class ReferralCampaignAdmin(admin.ModelAdmin):
-    list_display = ['name', 'code', 'users_count_display', 'is_active', 'invite_link_display', 'created_at']
+    list_display = [
+        'name', 'code', 'is_active',
+        'users_count_display', 'active_users_display', 'dead_users_display',
+        'first_chat_display', 'avg_chats_display', 'quality_display',
+        'invite_link_display', 'created_at',
+    ]
     list_editable = ['is_active']
     search_fields = ['name', 'code']
     list_filter = ['is_active', 'created_at']
-    readonly_fields = ['code', 'created_at', 'users_count_display', 'invite_link_display']
+    readonly_fields = [
+        'code', 'created_at',
+        'users_count_display', 'active_users_display', 'dead_users_display',
+        'first_chat_display', 'avg_chats_display', 'reports_display',
+        'quality_display', 'invite_link_display',
+    ]
     list_per_page = 50
 
     fieldsets = (
@@ -216,7 +226,11 @@ class ReferralCampaignAdmin(admin.ModelAdmin):
             ),
         }),
         ('📊 Статистика', {
-            'fields': ('users_count_display', 'invite_link_display'),
+            'fields': (
+                'users_count_display', 'active_users_display', 'dead_users_display',
+                'first_chat_display', 'avg_chats_display', 'reports_display',
+                'quality_display', 'invite_link_display',
+            ),
         }),
         ('Мета', {
             'fields': ('created_at',),
@@ -224,9 +238,90 @@ class ReferralCampaignAdmin(admin.ModelAdmin):
         }),
     )
 
-    @admin.display(description='👥 Пользователей')
+    @admin.display(description='👥 Всего')
     def users_count_display(self, obj):
         return obj.users.count()
+
+    @admin.display(description='🟢 Живые 7д')
+    def active_users_display(self, obj):
+        from django.utils import timezone as tz
+        from datetime import timedelta
+        d7 = tz.now() - timedelta(days=7)
+        return obj.users.filter(last_activity_at__gte=d7).count()
+
+    @admin.display(description='💀 Мёртвые 3д+')
+    def dead_users_display(self, obj):
+        from django.utils import timezone as tz
+        from datetime import timedelta
+        from django.db.models import Q
+        d3 = tz.now() - timedelta(days=3)
+        return obj.users.filter(Q(last_activity_at__lt=d3) | Q(last_activity_at__isnull=True)).count()
+
+    @admin.display(description='💬 Первый чат')
+    def first_chat_display(self, obj):
+        from apps.analytics.models import UserEvent
+        user_ids = list(obj.users.values_list('telegram_id', flat=True))
+        if not user_ids:
+            return 0
+        return UserEvent.objects.filter(
+            user__telegram_id__in=user_ids,
+            event_type='chat_started',
+        ).values('user').distinct().count()
+
+    @admin.display(description='💬 Ср. чатов')
+    def avg_chats_display(self, obj):
+        from apps.chat.models import ChatSession
+        from django.db.models import Q
+        total = obj.users.count()
+        if total == 0:
+            return '0'
+        closed = ChatSession.objects.filter(
+            Q(user1__campaign=obj) | Q(user2__campaign=obj),
+            status='closed',
+        ).count()
+        return round(closed / total, 1)
+
+    @admin.display(description='🚨 Жалоб')
+    def reports_display(self, obj):
+        from apps.reports.models import Report
+        sent = Report.objects.filter(from_user__campaign=obj).count()
+        received = Report.objects.filter(against_user__campaign=obj).count()
+        return f'{sent} / {received}'
+
+    @admin.display(description='⚡ Качество')
+    def quality_display(self, obj):
+        from django.utils import timezone as tz
+        from datetime import timedelta
+        from django.db.models import Q
+        from apps.analytics.models import UserEvent
+        from apps.reports.models import Report
+
+        total = obj.users.count()
+        if total == 0:
+            return '—'
+
+        d7 = tz.now() - timedelta(days=7)
+        alive = obj.users.filter(last_activity_at__gte=d7).count()
+        user_ids = list(obj.users.values_list('telegram_id', flat=True))
+        chats = UserEvent.objects.filter(
+            user__telegram_id__in=user_ids,
+            event_type='chat_started',
+        ).values('user').distinct().count()
+        returns = UserEvent.objects.filter(
+            user__telegram_id__in=user_ids,
+            event_type='next_search_started',
+        ).values('user').distinct().count()
+        reports = Report.objects.filter(against_user__campaign=obj).count()
+
+        alive_pct = alive / total
+        chat_pct = chats / total
+        return_pct = returns / max(chats, 1)
+        report_penalty = min(reports / max(total, 1), 0.5)
+        score = alive_pct * 30 + chat_pct * 30 + return_pct * 25 + (1 - report_penalty) * 15
+        score = min(100, max(0, round(score * 100 / 100)))
+
+        emoji = '🟢' if score >= 60 else '🟡' if score >= 30 else '🔴'
+        return f'{emoji} {score}/100'
 
     @admin.display(description='🔗 Ссылка')
     def invite_link_display(self, obj):
@@ -237,3 +332,4 @@ class ReferralCampaignAdmin(admin.ModelAdmin):
             '<a href="{}" target="_blank"><code>{}</code></a>',
             link, link,
         )
+

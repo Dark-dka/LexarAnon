@@ -25,6 +25,9 @@ admin_main_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text='🚨 Жалобы', callback_data='adm:reports'),
         InlineKeyboardButton(text='📈 Воронка', callback_data='adm:funnel'),
     ],
+    [
+        InlineKeyboardButton(text='🔗 Рефералы', callback_data='adm:refs'),
+    ],
     [InlineKeyboardButton(text='❌ Закрыть', callback_data='adm:close')],
 ])
 
@@ -68,6 +71,18 @@ funnel_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text='7 дней', callback_data='adm:funnel:7'),
         InlineKeyboardButton(text='30 дней', callback_data='adm:funnel:30'),
     ],
+    [InlineKeyboardButton(text='⬅️ Меню', callback_data='adm:menu')],
+])
+
+
+# ── Referrals sub-menu ──────────────────────────────────────────────────
+
+referrals_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [
+        InlineKeyboardButton(text='📋 Все кампании', callback_data='adm:refs:list:0'),
+        InlineKeyboardButton(text='🏆 Топ', callback_data='adm:refs:top'),
+    ],
+    [InlineKeyboardButton(text='➕ Создать кампанию', callback_data='adm:refs:add')],
     [InlineKeyboardButton(text='⬅️ Меню', callback_data='adm:menu')],
 ])
 
@@ -165,3 +180,34 @@ def bots_list_kb(bots, page: int = 0) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text='➕ Добавить бота', callback_data='adm:bt:add')])
     rows.append([InlineKeyboardButton(text='⬅️ Меню', callback_data='adm:menu')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ── Referral keyboards ──────────────────────────────────────────────────
+
+def campaign_card_kb(campaign_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    toggle_btn = InlineKeyboardButton(
+        text='🔴 Выключить' if is_active else '🟢 Включить',
+        callback_data=f'adm:refs:toggle:{campaign_id}',
+    )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text='📈 Воронка', callback_data=f'adm:refs:funnel:{campaign_id}'),
+            InlineKeyboardButton(text='👥 Юзеры', callback_data=f'adm:refs:users:{campaign_id}:0'),
+        ],
+        [
+            InlineKeyboardButton(text='🔗 Ссылка', callback_data=f'adm:refs:link:{campaign_id}'),
+            toggle_btn,
+        ],
+        [InlineKeyboardButton(text='⬅️ К списку', callback_data='adm:refs:list:0')],
+    ])
+
+
+def campaign_funnel_periods_kb(campaign_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text='Всё время', callback_data=f'adm:refs:fnl:{campaign_id}:0'),
+            InlineKeyboardButton(text='7д', callback_data=f'adm:refs:fnl:{campaign_id}:7'),
+            InlineKeyboardButton(text='30д', callback_data=f'adm:refs:fnl:{campaign_id}:30'),
+        ],
+        [InlineKeyboardButton(text='⬅️ К кампании', callback_data=f'adm:refs:card:{campaign_id}')],
+    ])
