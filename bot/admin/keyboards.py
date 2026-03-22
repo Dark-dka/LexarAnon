@@ -27,6 +27,7 @@ admin_main_menu = InlineKeyboardMarkup(inline_keyboard=[
     ],
     [
         InlineKeyboardButton(text='🔗 Рефералы', callback_data='adm:refs'),
+        InlineKeyboardButton(text='📋 Обяз. шаги', callback_data='adm:sub_stats'),
     ],
     [InlineKeyboardButton(text='❌ Закрыть', callback_data='adm:close')],
 ])

@@ -1023,3 +1023,47 @@ async def _handle_campaign_code(message: Message, state: FSMContext):
         reply_markup=kb.back_button('adm:refs'),
     )
 
+
+# ═══════════════════════════════════════════════════════════════════════
+#  📋 Subscription Stats (required channels + bots)
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == 'adm:sub_stats', AdminFilter())
+async def on_sub_stats(callback: CallbackQuery):
+    s = await services.get_subscription_stats()
+
+    lines = ['📋 <b>Обязательные шаги</b>\n']
+
+    # ── Channels section
+    lines.append(f'📢 <b>Каналы</b> ({s["ch_count"]} активных)')
+    if s['ch_count'] > 0:
+        pct = round(s['ch_passed'] / max(s['total_users'], 1) * 100)
+        lines.append(f'   ✅ Прошли: <b>{s["ch_passed"]}</b> из {s["total_users"]} ({pct}%)')
+        for ch in s['ch_breakdown']:
+            lines.append(f'   • {ch["title"]}: <b>{ch["subs"]}</b> подписок')
+    else:
+        lines.append('   <i>Нет активных каналов</i>')
+
+    lines.append('')
+
+    # ── Bots section
+    lines.append(f'🤖 <b>Боты</b> ({s["bot_count"]} активных)')
+    if s['bot_count'] > 0:
+        pct = round(s['bots_confirmed'] / max(s['total_users'], 1) * 100)
+        lines.append(f'   ✅ Прошли: <b>{s["bots_confirmed"]}</b> из {s["total_users"]} ({pct}%)')
+        lines.append(f'   👆 Всего кликов: <b>{s["total_clicks"]}</b>')
+        lines.append(f'   ☑️ Всего отметок: <b>{s["total_confirms"]}</b>')
+        lines.append(f'   ⏳ Застряли: <b>{s["stuck_on_bots"]}</b>')
+        lines.append('')
+        for b in s['bot_breakdown']:
+            conf_pct = round(b['confirms'] / max(b['clicks'], 1) * 100) if b['clicks'] else 0
+            lines.append(
+                f'   • @{b["username"]}: '
+                f'👆 {b["clicks"]} → ☑️ {b["confirms"]} ({conf_pct}%)'
+            )
+    else:
+        lines.append('   <i>Нет активных ботов</i>')
+
+    text = '\n'.join(lines)
+    await callback.message.edit_text(text, reply_markup=kb.back_button())
+    await callback.answer()

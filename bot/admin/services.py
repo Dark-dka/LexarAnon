@@ -6,7 +6,7 @@ from django.utils import timezone
 from django.db.models import Q, Count, Avg
 from asgiref.sync import sync_to_async
 
-from apps.users.models import TelegramUser, RequiredChannel, RequiredBot
+from apps.users.models import TelegramUser, RequiredChannel, RequiredBot, BotClickEvent, ChannelSubscriptionEvent
 from apps.chat.models import ChatSession
 from apps.reports.models import Report
 
@@ -234,3 +234,93 @@ async def touch_activity(telegram_id: int):
             last_activity_at=timezone.now()
         )
     await sync_to_async(_q)()
+
+
+async def get_subscription_stats() -> dict:
+    """Aggregate stats for required channels and required bots pass-through."""
+    def _q():
+        total_users = TelegramUser.objects.count()
+
+        # ── Channels ─────────────────────────────────
+        active_channels = list(RequiredChannel.objects.filter(is_active=True))
+        ch_count = len(active_channels)
+
+        # Users who passed channels = have ChannelSubscriptionEvent for ALL active channels
+        ch_passed = 0
+        if active_channels:
+            from django.db.models import Count as Cnt
+            ch_usernames = [c.channel_username for c in active_channels]
+            ch_passed = (
+                ChannelSubscriptionEvent.objects
+                .filter(channel_username__in=ch_usernames)
+                .values('user')
+                .annotate(cnt=Cnt('channel_username', distinct=True))
+                .filter(cnt__gte=ch_count)
+                .count()
+            )
+
+        # Per-channel subscription counts
+        ch_breakdown = []
+        for ch in active_channels:
+            sub_count = ChannelSubscriptionEvent.objects.filter(
+                channel_username=ch.channel_username,
+            ).count()
+            ch_breakdown.append({
+                'title': ch.title,
+                'username': ch.channel_username,
+                'subs': sub_count,
+            })
+
+        # ── Bots ─────────────────────────────────────
+        active_bots = list(RequiredBot.objects.filter(is_active=True))
+        bot_count = len(active_bots)
+
+        # Users who confirmed bots
+        bots_confirmed = TelegramUser.objects.filter(
+            bots_confirmed_at__isnull=False,
+        ).count()
+
+        # Total click events and self-confirm events
+        total_clicks = BotClickEvent.objects.count()
+        total_confirms = BotClickEvent.objects.filter(
+            self_confirmed_at__isnull=False,
+        ).count()
+
+        # Per-bot breakdown
+        bot_breakdown = []
+        for b in active_bots:
+            username = b.bot_username.lstrip('@')
+            clicks = BotClickEvent.objects.filter(bot_username=username).count()
+            confirms = BotClickEvent.objects.filter(
+                bot_username=username,
+                self_confirmed_at__isnull=False,
+            ).count()
+            bot_breakdown.append({
+                'title': b.title,
+                'username': username,
+                'clicks': clicks,
+                'confirms': confirms,
+            })
+
+        # Stuck: users who haven't confirmed bots yet
+        stuck_on_bots = 0
+        if active_bots:
+            stuck_on_bots = TelegramUser.objects.filter(
+                bots_confirmed_at__isnull=True,
+            ).count()
+
+        return {
+            'total_users': total_users,
+            'ch_count': ch_count,
+            'ch_passed': ch_passed,
+            'ch_breakdown': ch_breakdown,
+            'bot_count': bot_count,
+            'bots_confirmed': bots_confirmed,
+            'total_clicks': total_clicks,
+            'total_confirms': total_confirms,
+            'bot_breakdown': bot_breakdown,
+            'stuck_on_bots': stuck_on_bots,
+        }
+
+    return await sync_to_async(_q)()
+
