@@ -19,9 +19,11 @@ django.setup()
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot.config import BOT_TOKEN
 from bot.handlers import start, search, chat, report, fallback
+from bot.admin.handlers import router as admin_router
 from bot.middlewares.throttle import ThrottleMiddleware
 from bot.middlewares.subscription import SubscriptionMiddleware
 
@@ -41,7 +43,7 @@ async def main():
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dp = Dispatcher()
+    dp = Dispatcher(storage=MemoryStorage())
 
     # Register throttle middleware
     dp.message.middleware(ThrottleMiddleware())
@@ -51,7 +53,10 @@ async def main():
     dp.message.middleware(sub_mw)
     dp.callback_query.middleware(sub_mw)
 
-    # Register routers — fallback MUST be last (catches everything)
+    # Admin router FIRST (so /begu and admin callbacks take priority)
+    dp.include_router(admin_router)
+
+    # Regular routers — fallback MUST be last (catches everything)
     dp.include_router(start.router)
     dp.include_router(search.router)
     dp.include_router(report.router)
@@ -67,3 +72,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+

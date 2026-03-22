@@ -20,6 +20,7 @@ from bot.keyboards import (
 from bot import texts
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from apps.analytics.services import track
+from bot.admin.services import touch_activity
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ async def cmd_start(message: Message, bot: Bot):
     user, created = await sync_user(tg_user, bot, campaign_code=campaign_code)
 
     await track(telegram_id, 'start_opened', campaign_code=campaign_code or '', is_new=created)
+    await touch_activity(telegram_id)
 
     if user.is_blocked:
         await message.answer(texts.BLOCKED)

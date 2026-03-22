@@ -35,11 +35,12 @@ class TelegramUserAdmin(admin.ModelAdmin):
         'campaign',
         'is_active',
         'is_blocked',
+        'last_activity_at',
         'created_at',
     ]
     list_filter = ['is_active', 'is_blocked', 'created_at', 'campaign', CampaignFilter]
     search_fields = ['telegram_id', 'username', 'first_name', 'last_name']
-    readonly_fields = ['telegram_id', 'created_at', 'updated_at', 'photo_large', 'likes_count', 'dislikes_count']
+    readonly_fields = ['telegram_id', 'created_at', 'updated_at', 'last_activity_at', 'photo_large', 'likes_count', 'dislikes_count']
     list_editable = ['is_blocked']
     list_per_page = 50
     actions = ['block_users', 'unblock_users']
@@ -67,7 +68,7 @@ class TelegramUserAdmin(admin.ModelAdmin):
                            'но больше не используются в интерфейсе бота.',
         }),
         ('Даты', {
-            'fields': ('created_at', 'updated_at'),
+            'fields': ('created_at', 'updated_at', 'last_activity_at'),
         }),
     )
 

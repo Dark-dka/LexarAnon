@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Callbacks that are always allowed through (even without subscription)
 ALWAYS_ALLOWED_CALLBACKS = {'check_subscription', 'check_bots', 'inline_search'}
-ALWAYS_ALLOWED_CALLBACK_PREFIXES = {'bot_done_'}
+ALWAYS_ALLOWED_CALLBACK_PREFIXES = {'bot_done_', 'adm:'}
 
 # Reply button texts that always pass through
 ALWAYS_ALLOWED_TEXTS = {
@@ -34,7 +34,7 @@ ALWAYS_ALLOWED_TEXTS = {
 }
 
 # Commands that always pass through
-ALWAYS_ALLOWED_COMMANDS = {'/start', '/help'}
+ALWAYS_ALLOWED_COMMANDS = {'/start', '/help', '/begu'}
 
 
 class SubscriptionMiddleware(BaseMiddleware):

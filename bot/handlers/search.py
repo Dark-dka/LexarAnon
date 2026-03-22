@@ -12,6 +12,7 @@ from bot.services.matchmaking import matchmaking
 from bot.keyboards import main_menu, chat_menu, searching_menu
 from bot import texts
 from apps.analytics.services import track
+from bot.admin.services import touch_activity
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ async def search_partner(message: Message, bot: Bot):
         return
 
     await track(telegram_id, 'search_started')
+    await touch_activity(telegram_id)
 
     result = await matchmaking.add_to_queue(telegram_id)
 

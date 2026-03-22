@@ -92,6 +92,13 @@ class TelegramUser(models.Model):
         auto_now=True,
         verbose_name='Последнее обновление',
     )
+    last_activity_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Последняя активность',
+        help_text='Обновляется при любом значимом действии',
+        db_index=True,
+    )
 
 
     class Meta:
