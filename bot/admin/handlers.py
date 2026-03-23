@@ -115,6 +115,30 @@ async def on_users_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(F.data == 'adm:users:export_ids', AdminFilter())
+async def on_export_user_ids(callback: CallbackQuery):
+    """Generate and send TXT file with all user telegram IDs."""
+    from io import BytesIO
+
+    def _get_ids():
+        return list(
+            TelegramUser.objects.values_list('telegram_id', flat=True).order_by('telegram_id')
+        )
+
+    ids = await sync_to_async(_get_ids)()
+    content = '\n'.join(str(tid) for tid in ids)
+    file = BytesIO(content.encode('utf-8'))
+    file.name = f'user_ids_{len(ids)}.txt'
+
+    from aiogram.types import BufferedInputFile
+    doc = BufferedInputFile(file.getvalue(), filename=file.name)
+    await callback.message.answer_document(
+        doc,
+        caption=f'📥 Все ID пользователей: <b>{len(ids)}</b>',
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith('adm:users:search'), AdminFilter())
 async def on_users_search_prompt(callback: CallbackQuery, state: FSMContext):
     await state.set_state('admin_user_search')

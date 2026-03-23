@@ -48,7 +48,10 @@ users_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text='☠️ Мёртвые 30д+', callback_data='adm:users:dead_30d:0'),
         InlineKeyboardButton(text='🚫 Заблок.', callback_data='adm:users:blocked:0'),
     ],
-    [InlineKeyboardButton(text='🔍 Поиск', callback_data='adm:users:search')],
+    [
+        InlineKeyboardButton(text='🔍 Поиск', callback_data='adm:users:search'),
+        InlineKeyboardButton(text='📥 Скачать ID', callback_data='adm:users:export_ids'),
+    ],
     [InlineKeyboardButton(text='⬅️ Меню', callback_data='adm:menu')],
 ])
 
