@@ -1,4 +1,7 @@
+import csv
+
 from django.contrib import admin
+from django.http import HttpResponse
 from django.utils.html import format_html
 
 from .models import TelegramUser, Rating, RequiredChannel, RequiredBot, ChannelSubscriptionEvent, ReferralCampaign, BotClickEvent
@@ -43,7 +46,7 @@ class TelegramUserAdmin(admin.ModelAdmin):
     readonly_fields = ['telegram_id', 'created_at', 'updated_at', 'last_activity_at', 'photo_large', 'likes_count', 'dislikes_count']
     list_editable = ['is_blocked']
     list_per_page = 50
-    actions = ['block_users', 'unblock_users']
+    actions = ['block_users', 'unblock_users', 'export_users_csv']
 
     fieldsets = (
         ('Telegram данные', {
@@ -107,6 +110,36 @@ class TelegramUserAdmin(admin.ModelAdmin):
     def unblock_users(self, request, queryset):
         count = queryset.update(is_blocked=False)
         self.message_user(request, f'Разблокировано пользователей: {count}')
+
+    @admin.action(description='📥 Скачать CSV')
+    def export_users_csv(self, request, queryset):
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = 'attachment; filename="users.csv"'
+        response.write('\ufeff')  # BOM for Excel
+
+        writer = csv.writer(response, delimiter=';')
+        writer.writerow([
+            'ID', 'Telegram ID', 'Username', 'Имя', 'Фамилия',
+            'Пол', 'Ищу пол', 'Кампания', 'Активен', 'Заблокирован',
+            'Последняя активность', 'Дата регистрации',
+        ])
+        for u in queryset.select_related('campaign').order_by('-created_at'):
+            writer.writerow([
+                u.pk,
+                u.telegram_id,
+                u.username or '',
+                u.first_name or '',
+                u.last_name or '',
+                u.get_gender_display() if u.gender else '',
+                u.get_search_gender_display() if u.search_gender else '',
+                u.campaign.name if u.campaign else '',
+                'Да' if u.is_active else 'Нет',
+                'Да' if u.is_blocked else 'Нет',
+                u.last_activity_at.strftime('%Y-%m-%d %H:%M') if u.last_activity_at else '',
+                u.created_at.strftime('%Y-%m-%d %H:%M'),
+            ])
+        self.message_user(request, f'Экспортировано {queryset.count()} пользователей')
+        return response
 
 
 @admin.register(Rating)
