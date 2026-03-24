@@ -80,44 +80,52 @@ profile_actions_keyboard = InlineKeyboardMarkup(
 )
 
 
-# ── Required channels keyboard ──────────────────────────────────────────
+# ── Combined activation keyboard (channels + bots in one) ───────────────
 
-def subscribe_keyboard(channels) -> InlineKeyboardMarkup:
-    """Button for every required channel + check button."""
-    rows = [
-        [InlineKeyboardButton(text=f'📢 {ch.title}', url=ch.invite_link)]
-        for ch in channels
-    ]
-    rows.append(
-        [InlineKeyboardButton(text='✅ Проверить подписку', callback_data='check_subscription')]
-    )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-# ── Required bots keyboard ──────────────────────────────────────────────
-
-def bots_keyboard(bots, confirmed: set[str] | None = None) -> InlineKeyboardMarkup:
+def activation_keyboard(
+    channels=None, bots=None, confirmed_bots: set[str] | None = None,
+) -> InlineKeyboardMarkup:
     """
-    Two buttons per bot: open URL + individual confirm.
-    confirmed = set of bot_usernames already confirmed (from DB).
+    Single keyboard for all activation steps:
+    - Channel subscribe links
+    - Bot open links + individual confirm buttons
+    - One unified ✅ check button
     """
-    if confirmed is None:
-        confirmed = set()
+    if confirmed_bots is None:
+        confirmed_bots = set()
 
     rows = []
-    for bot in bots:
-        username = bot.bot_username.lstrip('@')
-        is_done = username in confirmed
-        tick = '✅' if is_done else '☑️'
-        rows.append([
-            InlineKeyboardButton(text=f'🤖 {bot.title}', url=bot.invite_link),
-            InlineKeyboardButton(
-                text=f'{tick} Отметить',
-                callback_data=f'bot_done_{username}',
-            ),
-        ])
+
+    # Channel links
+    if channels:
+        for ch in channels:
+            rows.append([InlineKeyboardButton(text=f'📢 {ch.title}', url=ch.invite_link)])
+
+    # Bot links + confirm
+    if bots:
+        for bot in bots:
+            username = bot.bot_username.lstrip('@')
+            is_done = username in confirmed_bots
+            tick = '✅' if is_done else '☑️'
+            rows.append([
+                InlineKeyboardButton(text=f'🤖 {bot.title}', url=bot.invite_link),
+                InlineKeyboardButton(
+                    text=f'{tick} Отметить',
+                    callback_data=f'bot_done_{username}',
+                ),
+            ])
 
     rows.append(
-        [InlineKeyboardButton(text='🎯 Завершить активацию', callback_data='check_bots')]
+        [InlineKeyboardButton(text='✅ Проверить и продолжить', callback_data='check_activation')]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# Keep old names as aliases for backwards compatibility
+def subscribe_keyboard(channels) -> InlineKeyboardMarkup:
+    return activation_keyboard(channels=channels)
+
+
+def bots_keyboard(bots, confirmed: set[str] | None = None) -> InlineKeyboardMarkup:
+    return activation_keyboard(bots=bots, confirmed_bots=confirmed)
+

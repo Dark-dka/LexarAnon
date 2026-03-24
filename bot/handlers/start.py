@@ -265,19 +265,17 @@ async def cmd_how_it_works(message: Message):
 #  Subscription check
 # ═══════════════════════════════════════════════════════════════════════
 
-@router.callback_query(F.data == 'check_subscription')
-async def on_check_subscription(callback: CallbackQuery, bot: Bot):
+@router.callback_query(F.data.in_({'check_activation', 'check_subscription'}))
+async def on_check_activation(callback: CallbackQuery, bot: Bot):
+    """Unified check: channels (fail-open) + bots (DB confirm)."""
     user_id = callback.from_user.id
+    await track(user_id, 'activation_check_clicked')
 
-    await track(user_id, 'subscription_check_clicked')
-
+    # ── Check channels ──
     channels = await sync_to_async(list)(
         RequiredChannel.objects.filter(is_active=True)
     )
-
     not_subscribed = []
-    check_errors = []
-
     for channel in channels:
         try:
             member = await bot.get_chat_member(
@@ -297,46 +295,82 @@ async def on_check_subscription(callback: CallbackQuery, bot: Bot):
                     defaults={'channel_title': channel.title},
                 )
         except (TelegramBadRequest, TelegramForbiddenError) as e:
-            error_type = type(e).__name__
+            # Fail-open: bot isn't admin in channel, skip check
             logger.warning(
-                f'Channel check failed: {channel.channel_username} '
-                f'user={user_id} error={error_type}: {e}'
-            )
-            not_subscribed.append(channel)
-            check_errors.append({
-                'channel': channel.channel_username,
-                'error_type': error_type,
-            })
-            await track(
-                user_id, 'required_channel_check_failed',
-                channel_username=channel.channel_username,
-                error_type=error_type,
+                f'Channel check failed (skipping): {channel.channel_username} '
+                f'user={user_id} error={type(e).__name__}: {e}'
             )
         except Exception as e:
-            error_type = type(e).__name__
             logger.error(
-                f'Unexpected channel check error: {channel.channel_username} '
-                f'user={user_id} error={error_type}: {e}'
-            )
-            not_subscribed.append(channel)
-            check_errors.append({
-                'channel': channel.channel_username,
-                'error_type': error_type,
-            })
-            await track(
-                user_id, 'required_channel_check_failed',
-                channel_username=channel.channel_username,
-                error_type=error_type,
+                f'Unexpected channel check error (skipping): {channel.channel_username} '
+                f'user={user_id} error={type(e).__name__}: {e}'
             )
 
-    if not_subscribed:
-        if check_errors:
-            await track(user_id, 'required_channels_failed', errors=len(check_errors))
-        await callback.answer(texts.SUBSCRIPTION_NOT_YET, show_alert=True)
-    else:
-        await track(user_id, 'required_channels_passed')
-        await callback.message.edit_text(texts.SUBSCRIPTION_VERIFIED)
-        await callback.answer('✅')
+    # ── Check bots ──
+    required_bots = await sync_to_async(list)(
+        RequiredBot.objects.filter(is_active=True)
+    )
+    missing_bots = []
+    if required_bots:
+        try:
+            tg_user = await sync_to_async(TelegramUser.objects.get)(telegram_id=user_id)
+        except TelegramUser.DoesNotExist:
+            await callback.answer('Нажми /start', show_alert=True)
+            return
+
+        confirmed = set(await sync_to_async(list)(
+            BotClickEvent.objects.filter(
+                user=tg_user,
+                self_confirmed_at__isnull=False,
+            ).values_list('bot_username', flat=True)
+        ))
+        required_usernames = {b.bot_username.lstrip('@') for b in required_bots}
+        missing_bots = list(required_usernames - confirmed)
+
+    # ── Result ──
+    if not_subscribed or missing_bots:
+        problems = []
+        if not_subscribed:
+            problems.append('подписка на каналы')
+        if missing_bots:
+            problems.append('боты не отмечены')
+        await callback.answer(
+            f'❌ Не всё выполнено: {", ".join(problems)}',
+            show_alert=True,
+        )
+        # Refresh keyboard with current state
+        from bot.keyboards import activation_keyboard
+        kb = activation_keyboard(
+            channels=not_subscribed if not_subscribed else None,
+            bots=required_bots if missing_bots else None,
+            confirmed_bots=confirmed if required_bots else set(),
+        )
+        try:
+            await callback.message.edit_text(
+                texts.ACTIVATION_REQUIRED,
+                reply_markup=kb,
+            )
+        except Exception:
+            pass
+        return
+
+    # All checks passed — save confirmation
+    if required_bots:
+        try:
+            from django.utils import timezone
+            tg_user.bots_confirmed_at = timezone.now()
+            await sync_to_async(tg_user.save)(update_fields=['bots_confirmed_at'])
+        except Exception as e:
+            logger.warning(f'Could not save bots_confirmed_at: {e}')
+
+    await track(user_id, 'activation_passed')
+
+    await callback.message.edit_text(texts.BOTS_CONFIRMED)
+    await callback.message.answer(
+        '🚀 Всё готово! Найди первого собеседника:',
+        reply_markup=search_now_keyboard,
+    )
+    await callback.answer('🎉')
 
 
 # ═══════════════════════════════════════════════════════════════════════
