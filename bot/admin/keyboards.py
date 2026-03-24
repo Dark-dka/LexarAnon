@@ -29,6 +29,9 @@ admin_main_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text='🔗 Рефералы', callback_data='adm:refs'),
         InlineKeyboardButton(text='📋 Обяз. шаги', callback_data='adm:sub_stats'),
     ],
+    [
+        InlineKeyboardButton(text='📨 Рассылка', callback_data='adm:broadcast'),
+    ],
     [InlineKeyboardButton(text='❌ Закрыть', callback_data='adm:close')],
 ])
 
@@ -248,4 +251,15 @@ def campaign_funnel_periods_kb(campaign_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text='30д', callback_data=f'adm:refs:fnl:{campaign_id}:30'),
         ],
         [InlineKeyboardButton(text='⬅️ К кампании', callback_data=f'adm:refs:card:{campaign_id}')],
+    ])
+
+
+# ── Broadcast keyboards ─────────────────────────────────────────────────
+
+def broadcast_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text='✅ Отправить всем', callback_data='adm:broadcast:confirm'),
+            InlineKeyboardButton(text='❌ Отмена', callback_data='adm:menu'),
+        ],
     ])

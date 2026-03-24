@@ -22,3 +22,8 @@ class AddCampaignFSM(StatesGroup):
     name = State()
     description = State()
     code = State()
+
+
+class BroadcastFSM(StatesGroup):
+    content = State()     # waiting for message to broadcast
+    confirm = State()     # waiting for confirmation

@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from asgiref.sync import sync_to_async
 
 from bot.admin.filters import AdminFilter, is_admin
-from bot.admin.states import AddChannelFSM, AddBotFSM, AddCampaignFSM
+from bot.admin.states import AddChannelFSM, AddBotFSM, AddCampaignFSM, BroadcastFSM
 from bot.admin import keyboards as kb
 from bot.admin import services
 from bot.admin import referral_services as ref_svc
@@ -158,6 +158,7 @@ async def on_users_search_prompt(callback: CallbackQuery, state: FSMContext):
         AddChannelFSM.title, AddChannelFSM.username, AddChannelFSM.invite_link,
         AddBotFSM.title, AddBotFSM.username, AddBotFSM.invite_link,
         AddCampaignFSM.name, AddCampaignFSM.description, AddCampaignFSM.code,
+        BroadcastFSM.content,
     ),
 )
 async def on_admin_text_input(message: Message, state: FSMContext):
@@ -186,6 +187,24 @@ async def on_admin_text_input(message: Message, state: FSMContext):
         await _handle_campaign_desc(message, state)
     elif current == AddCampaignFSM.code:
         await _handle_campaign_code(message, state)
+    elif current == BroadcastFSM.content:
+        await _handle_broadcast_content(message, state)
+
+
+async def _handle_broadcast_content(message: Message, state: FSMContext):
+    """Save broadcast text and ask for confirmation."""
+    total = await sync_to_async(TelegramUser.objects.filter(is_active=True, is_blocked=False).count)()
+    await state.update_data(broadcast_text=message.text, broadcast_type='text')
+    await state.set_state(BroadcastFSM.confirm)
+    await message.answer(
+        f'📨 <b>Предпросмотр рассылки:</b>\n\n'
+        f'{message.text}\n\n'
+        f'—\n'
+        f'👥 Получателей: <b>{total}</b>\n\n'
+        f'Отправить?',
+        reply_markup=kb.broadcast_confirm_kb(),
+    )
+
 
 
 async def _handle_user_search(message: Message, state: FSMContext):
@@ -1271,3 +1290,149 @@ async def on_sub_stats(callback: CallbackQuery):
     text = '\n'.join(lines)
     await callback.message.edit_text(text, reply_markup=kb.back_button())
     await callback.answer()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  📨 Broadcast / Рассылка
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data == 'adm:broadcast', AdminFilter())
+async def on_broadcast_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(BroadcastFSM.content)
+    total = await sync_to_async(TelegramUser.objects.filter(is_active=True, is_blocked=False).count)()
+    await callback.message.edit_text(
+        f'📨 <b>Рассылка</b>\n\n'
+        f'👥 Активных пользователей: <b>{total}</b>\n\n'
+        f'Отправь сообщение для рассылки (текст, фото или видео):',
+        reply_markup=kb.back_button(),
+    )
+    await callback.answer()
+
+
+@router.message(
+    F.photo,
+    AdminFilter(),
+    StateFilter(BroadcastFSM.content),
+)
+async def on_broadcast_photo(message: Message, state: FSMContext):
+    """Handle photo for broadcast."""
+    total = await sync_to_async(TelegramUser.objects.filter(is_active=True, is_blocked=False).count)()
+    photo_id = message.photo[-1].file_id
+    caption = message.caption or ''
+    await state.update_data(broadcast_type='photo', broadcast_photo=photo_id, broadcast_text=caption)
+    await state.set_state(BroadcastFSM.confirm)
+    await message.answer_photo(
+        photo_id,
+        caption=(
+            f'📨 <b>Предпросмотр рассылки (фото)</b>\n\n'
+            f'{caption}\n\n'
+            f'—\n'
+            f'👥 Получателей: <b>{total}</b>\n\nОтправить?'
+        ),
+        reply_markup=kb.broadcast_confirm_kb(),
+    )
+
+
+@router.message(
+    F.video,
+    AdminFilter(),
+    StateFilter(BroadcastFSM.content),
+)
+async def on_broadcast_video(message: Message, state: FSMContext):
+    """Handle video for broadcast."""
+    total = await sync_to_async(TelegramUser.objects.filter(is_active=True, is_blocked=False).count)()
+    video_id = message.video.file_id
+    caption = message.caption or ''
+    await state.update_data(broadcast_type='video', broadcast_video=video_id, broadcast_text=caption)
+    await state.set_state(BroadcastFSM.confirm)
+    await message.answer_video(
+        video_id,
+        caption=(
+            f'📨 <b>Предпросмотр рассылки (видео)</b>\n\n'
+            f'{caption}\n\n'
+            f'—\n'
+            f'👥 Получателей: <b>{total}</b>\n\nОтправить?'
+        ),
+        reply_markup=kb.broadcast_confirm_kb(),
+    )
+
+
+@router.callback_query(F.data == 'adm:broadcast:confirm', AdminFilter())
+async def on_broadcast_confirm(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    """Send broadcast to all active users."""
+    data = await state.get_data()
+    await state.clear()
+
+    broadcast_type = data.get('broadcast_type', 'text')
+    text = data.get('broadcast_text', '')
+    photo_id = data.get('broadcast_photo')
+    video_id = data.get('broadcast_video')
+
+    def _get_user_ids():
+        return list(
+            TelegramUser.objects.filter(is_active=True, is_blocked=False)
+            .values_list('telegram_id', flat=True)
+        )
+
+    user_ids = await sync_to_async(_get_user_ids)()
+    total = len(user_ids)
+
+    progress_msg = await callback.message.edit_text(
+        f'📨 Рассылка запущена...\n\n'
+        f'⏳ 0 / {total}',
+    )
+    await callback.answer()
+
+    sent = 0
+    failed = 0
+    blocked = 0
+    import asyncio
+
+    for i, uid in enumerate(user_ids):
+        try:
+            if broadcast_type == 'photo' and photo_id:
+                await bot.send_photo(uid, photo_id, caption=text or None)
+            elif broadcast_type == 'video' and video_id:
+                await bot.send_video(uid, video_id, caption=text or None)
+            else:
+                await bot.send_message(uid, text)
+            sent += 1
+        except Exception as e:
+            err_msg = str(e).lower()
+            if 'blocked' in err_msg or 'deactivated' in err_msg or 'not found' in err_msg:
+                blocked += 1
+                # Mark as blocked in DB
+                try:
+                    await sync_to_async(
+                        TelegramUser.objects.filter(telegram_id=uid).update
+                    )(is_blocked=True)
+                except Exception:
+                    pass
+            else:
+                failed += 1
+
+        # Progress update every 50 users
+        if (i + 1) % 50 == 0 or (i + 1) == total:
+            try:
+                await progress_msg.edit_text(
+                    f'📨 Рассылка...\n\n'
+                    f'⏳ {i + 1} / {total}\n'
+                    f'✅ Отправлено: {sent}\n'
+                    f'🚫 Заблокировали: {blocked}\n'
+                    f'❌ Ошибок: {failed}'
+                )
+            except Exception:
+                pass
+
+        # Small delay to avoid rate limits
+        await asyncio.sleep(0.05)
+
+    # Final report
+    await progress_msg.edit_text(
+        f'📨 <b>Рассылка завершена!</b>\n\n'
+        f'✅ Отправлено: <b>{sent}</b>\n'
+        f'🚫 Заблокировали: <b>{blocked}</b>\n'
+        f'❌ Ошибок: <b>{failed}</b>\n'
+        f'📊 Всего: <b>{total}</b>',
+        reply_markup=kb.back_button(),
+    )
