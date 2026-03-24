@@ -11,6 +11,40 @@ from apps.chat.models import ChatSession
 from apps.reports.models import Report
 
 
+LANG_FLAGS = {
+    'ru': '🇷🇺', 'uk': '🇺🇦', 'en': '🇺🇸', 'uz': '🇺🇿',
+    'kk': '🇰🇿', 'tr': '🇹🇷', 'de': '🇩🇪', 'fr': '🇫🇷',
+    'es': '🇪🇸', 'ar': '🇸🇦', 'zh': '🇨🇳', 'ja': '🇯🇵',
+}
+
+
+def _get_lang_stats() -> list[dict]:
+    """Get language distribution of users."""
+    from django.db.models import Count as Cnt
+    langs = (
+        TelegramUser.objects
+        .exclude(language_code='')
+        .exclude(language_code__isnull=True)
+        .values('language_code')
+        .annotate(cnt=Cnt('id'))
+        .order_by('-cnt')
+    )
+    total = sum(l['cnt'] for l in langs)
+    result = []
+    other = 0
+    for item in langs:
+        code = (item['language_code'] or '').lower()[:2]
+        pct = round(item['cnt'] / max(total, 1) * 100, 1)
+        if pct >= 1.0:
+            flag = LANG_FLAGS.get(code, '🏳️')
+            result.append({'code': code.upper(), 'flag': flag, 'pct': pct})
+        else:
+            other += pct
+    if other > 0:
+        result.append({'code': 'Прочие', 'flag': '🏳️', 'pct': round(other, 1)})
+    return result
+
+
 async def get_stats() -> dict:
     """Aggregate all dashboard stats."""
     now = timezone.now()
@@ -63,6 +97,13 @@ async def get_stats() -> dict:
             'chats_today': chats_today, 'chats_7d': chats_7d,
             'reports_today': reports_today, 'reports_7d': reports_7d,
             'avg_chats': avg_chats,
+            # BotStat-style stats
+            'alive_total': alive_7d,  # BotStat uses ~7d for "alive"
+            'dead_total': total - alive_7d,
+            'gender_m': TelegramUser.objects.filter(gender='male').count(),
+            'gender_f': TelegramUser.objects.filter(gender='female').count(),
+            'gender_total': TelegramUser.objects.exclude(gender='').exclude(gender__isnull=True).count(),
+            'lang_stats': _get_lang_stats(),
         }
 
     return await sync_to_async(_q)()

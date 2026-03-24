@@ -76,16 +76,34 @@ async def on_stats(callback: CallbackQuery):
 
     q_size = matchmaking.queue_size
 
+    # Gender percentages
+    g_total = s['gender_total'] or 1
+    m_pct = round(s['gender_m'] / g_total * 100, 1)
+    f_pct = round(s['gender_f'] / g_total * 100, 1)
+
+    # Language lines
+    lang_lines = ''
+    for l in s['lang_stats']:
+        lang_lines += f'{l["flag"]} {l["code"]}: <b>{l["pct"]}%</b>\n'
+
     text = (
         '📊 <b>Статистика</b>\n'
         '\n'
+        '<b>Пользователи:</b>\n'
         f'👥 Всего: <b>{s["total"]}</b>\n'
+        f'🟢 Живые: <b>{s["alive_total"]}</b>\n'
+        f'💀 Мёртвые: <b>{s["dead_total"]}</b>\n'
+        f'🚫 Заблок: <b>{s["blocked"]}</b>\n'
+        '\n'
+        f'<b>Пол аудитории</b>\n'
+        f'♂️ М: <b>{m_pct}%</b> / ♀️ Ж: <b>{f_pct}%</b>\n'
+        '\n'
+        f'<b>Языки:</b>\n'
+        f'{lang_lines}'
+        '———\n'
+        '\n'
         f'🆕 Новые: <b>{s["new_1d"]}</b> / {s["new_7d"]} / {s["new_30d"]}\n'
         f'   <i>(сегодня / 7д / 30д)</i>\n'
-        '\n'
-        f'🟢 Живые: <b>{s["alive_1d"]}</b> / {s["alive_7d"]} / {s["alive_30d"]}\n'
-        f'💀 Мёртвые: <b>{s["dead_3d"]}</b> (3д+) / {s["dead_30d"]} (30д+)\n'
-        f'🚫 Заблок: <b>{s["blocked"]}</b>\n'
         '\n'
         f'🔍 В поиске: <b>{q_size}</b>\n'
         f'💬 Активных чатов: <b>{s["active_chats"]}</b>\n'
