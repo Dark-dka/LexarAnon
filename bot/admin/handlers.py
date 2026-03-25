@@ -287,19 +287,23 @@ async def on_users_list(callback: CallbackQuery):
 
     lines = [f'{name} — <b>{total}</b>\n']
     for i, u in enumerate(users, start=page * PAGE_SIZE + 1):
+        uname = f'@{u.username}' if u.username else '—'
         act = ''
         if u.last_activity_at:
             act = f' · {u.last_activity_at:%d.%m %H:%M}'
-        lines.append(f'{i}. <code>{u.telegram_id}</code> {u.display_name}{act}')
+        lines.append(f'{i}. <code>{u.telegram_id}</code> {uname} {u.display_name}{act}')
 
     text = '\n'.join(lines) if lines else 'Пусто.'
 
-    from aiogram.types import InlineKeyboardButton
-    # Build user selection + pagination
-    rows = [[InlineKeyboardButton(
-        text=f'{u.display_name}',
-        callback_data=f'adm:user:card:{u.telegram_id}',
-    )] for u in users]
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    # Build user card buttons with username visible
+    rows = []
+    for u in users:
+        uname = f'@{u.username}' if u.username else str(u.telegram_id)
+        rows.append([InlineKeyboardButton(
+            text=f'👤 {uname} — {u.display_name}',
+            callback_data=f'adm:user:card:{u.telegram_id}',
+        )])
 
     # Pagination
     nav = []
@@ -311,7 +315,6 @@ async def on_users_list(callback: CallbackQuery):
         rows.append(nav)
     rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='adm:users')])
 
-    from aiogram.types import InlineKeyboardMarkup
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
 
@@ -838,7 +841,7 @@ async def on_media(callback: CallbackQuery):
     await _show_media_page(callback, 0)
 
 
-@router.callback_query(F.data.startswith('adm:media:'), AdminFilter())
+@router.callback_query(F.data.regexp(r'^adm:media:\d+$'), AdminFilter())
 async def on_media_page(callback: CallbackQuery):
     page = int(callback.data.split(':')[-1])
     await _show_media_page(callback, page)
@@ -847,20 +850,107 @@ async def on_media_page(callback: CallbackQuery):
 async def _show_media_page(callback: CallbackQuery, page: int):
     items, total = await services.get_media_list(page, PAGE_SIZE)
 
+    if not items:
+        await callback.message.edit_text(
+            '🖼 Медиа нет.',
+            reply_markup=kb.back_button(),
+        )
+        await callback.answer()
+        return
+
+    MEDIA_ICONS = {
+        'photo': '📸', 'video': '🎬', 'voice': '🎤',
+        'document': '📄', 'sticker': '🏷', 'video_note': '⚪',
+    }
+
     lines = [f'🖼 <b>Медиа</b> — {total}\n']
     for m in items:
-        sender = await sync_to_async(lambda: m.sender.display_name)()
+        sender = await sync_to_async(lambda msg=m: msg.sender.display_name)()
+        uname = await sync_to_async(lambda msg=m: msg.sender.username)()
         date = m.created_at.strftime('%d.%m %H:%M')
-        t = m.get_message_type_display()
-        lines.append(f'• {date} | {t} | {sender}')
+        icon = MEDIA_ICONS.get(m.message_type, '📎')
+        who = f'@{uname}' if uname else sender
+        lines.append(f'{icon} {date} | {who}')
 
-    text = '\n'.join(lines) if items else '🖼 Медиа нет.'
+    text = '\n'.join(lines)
 
-    await callback.message.edit_text(
-        text,
-        reply_markup=kb.pagination_kb('adm:media', page, total, PAGE_SIZE),
-    )
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    rows = []
+    for m in items:
+        sender = await sync_to_async(lambda msg=m: msg.sender.display_name)()
+        icon = MEDIA_ICONS.get(m.message_type, '📎')
+        rows.append([InlineKeyboardButton(
+            text=f'👁 {icon} #{m.id} — {sender}',
+            callback_data=f'adm:media:view:{m.id}',
+        )])
+
+    # Pagination
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text='◀️', callback_data=f'adm:media:{page - 1}'))
+    if (page + 1) * PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton(text='▶️', callback_data=f'adm:media:{page + 1}'))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text='⬅️ Меню', callback_data='adm:menu')])
+
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith('adm:media:view:'), AdminFilter())
+async def on_media_view(callback: CallbackQuery, bot: Bot):
+    """Send actual media file to admin for preview."""
+    msg_id = int(callback.data.split(':')[-1])
+    from apps.chat.models import Message as Msg
+
+    def _get():
+        try:
+            return Msg.objects.select_related('sender', 'chat_session').get(id=msg_id)
+        except Msg.DoesNotExist:
+            return None
+
+    msg = await sync_to_async(_get)()
+    if not msg:
+        await callback.answer('Не найдено', show_alert=True)
+        return
+
+    file_id = msg.telegram_file_id
+    if not file_id:
+        await callback.answer('Файл недоступен (нет file_id)', show_alert=True)
+        return
+
+    sender = await sync_to_async(lambda: msg.sender.display_name)()
+    chat_id = await sync_to_async(lambda: msg.chat_session_id)()
+    caption = (
+        f'🖼 <b>Медиа #{msg.id}</b>\n'
+        f'💬 Чат: #{chat_id}\n'
+        f'👤 Отправитель: {sender}\n'
+        f'📅 {msg.created_at:%d.%m.%Y %H:%M}'
+    )
+    if msg.text:
+        caption += f'\n📝 {msg.text[:200]}'
+
+    admin_chat = callback.message.chat.id
+    try:
+        if msg.message_type == 'photo':
+            await bot.send_photo(admin_chat, file_id, caption=caption)
+        elif msg.message_type == 'video':
+            await bot.send_video(admin_chat, file_id, caption=caption)
+        elif msg.message_type == 'voice':
+            await bot.send_voice(admin_chat, file_id, caption=caption)
+        elif msg.message_type == 'video_note':
+            await bot.send_video_note(admin_chat, file_id)
+            await bot.send_message(admin_chat, caption)
+        elif msg.message_type == 'sticker':
+            await bot.send_sticker(admin_chat, file_id)
+        elif msg.message_type == 'document':
+            await bot.send_document(admin_chat, file_id, caption=caption)
+        else:
+            await bot.send_document(admin_chat, file_id, caption=caption)
+        await callback.answer('📤 Отправлено')
+    except Exception as e:
+        await callback.answer(f'Ошибка: {str(e)[:100]}', show_alert=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════
