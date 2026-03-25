@@ -233,12 +233,19 @@ async def get_chat_detail(session_id: int) -> dict | None:
             seconds = int(delta.total_seconds() % 60)
             duration = f'{minutes}м {seconds}с'
 
+        u1_uname = f'@{s.user1.username}' if s.user1.username else str(s.user1.telegram_id)
+        u2_uname = f'@{s.user2.username}' if s.user2.username else str(s.user2.telegram_id)
+
         return {
             'session': s,
             'user1_name': s.user1.display_name,
             'user2_name': s.user2.display_name,
             'user1_tid': s.user1.telegram_id,
             'user2_tid': s.user2.telegram_id,
+            'user1_uname': u1_uname,
+            'user2_uname': u2_uname,
+            'user1_username': s.user1.username or '',
+            'user2_username': s.user2.username or '',
             'status': s.get_status_display(),
             'created_at': s.created_at.strftime('%d.%m.%Y %H:%M'),
             'ended_at': s.ended_at.strftime('%d.%m.%Y %H:%M') if s.ended_at else '—',

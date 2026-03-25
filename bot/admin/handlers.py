@@ -689,8 +689,8 @@ async def on_chat_detail(callback: CallbackQuery):
         f'💬 <b>Чат #{session_id}</b>\n'
         f'\n'
         f'{status_icon} Статус: <b>{data["status"]}</b>\n'
-        f'👤 User 1: <b>{data["user1_name"]}</b> ({data["user1_tid"]})\n'
-        f'👤 User 2: <b>{data["user2_name"]}</b> ({data["user2_tid"]})\n'
+        f'👤 {data["user1_uname"]}: <b>{data["user1_name"]}</b> (<code>{data["user1_tid"]}</code>)\n'
+        f'👤 {data["user2_uname"]}: <b>{data["user2_name"]}</b> (<code>{data["user2_tid"]}</code>)\n'
         f'\n'
         f'📅 Начало: {data["created_at"]}\n'
         f'📅 Конец: {data["ended_at"]}\n'
@@ -704,7 +704,11 @@ async def on_chat_detail(callback: CallbackQuery):
 
     await callback.message.edit_text(
         text,
-        reply_markup=kb.chat_card_kb(session_id, data['user1_tid'], data['user2_tid']),
+        reply_markup=kb.chat_card_kb(
+            session_id, data['user1_tid'], data['user2_tid'],
+            user1_uname=data.get('user1_username', ''),
+            user2_uname=data.get('user2_username', ''),
+        ),
     )
     await callback.answer()
 

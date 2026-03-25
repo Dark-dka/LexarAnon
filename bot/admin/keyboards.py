@@ -92,13 +92,16 @@ def chats_list_kb(chats: list, prefix: str, page: int, total: int,
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def chat_card_kb(session_id: int, user1_tid: int, user2_tid: int) -> InlineKeyboardMarkup:
+def chat_card_kb(session_id: int, user1_tid: int, user2_tid: int,
+                 user1_uname: str = '', user2_uname: str = '') -> InlineKeyboardMarkup:
     """Buttons for individual chat card."""
+    u1_label = f'@{user1_uname}' if user1_uname else str(user1_tid)
+    u2_label = f'@{user2_uname}' if user2_uname else str(user2_tid)
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='📜 История переписки', callback_data=f'adm:chat_hist:{session_id}:0')],
         [
-            InlineKeyboardButton(text='👤 User 1', callback_data=f'adm:user:card:{user1_tid}'),
-            InlineKeyboardButton(text='👤 User 2', callback_data=f'adm:user:card:{user2_tid}'),
+            InlineKeyboardButton(text=f'👤 {u1_label}', callback_data=f'adm:user:card:{user1_tid}'),
+            InlineKeyboardButton(text=f'👤 {u2_label}', callback_data=f'adm:user:card:{user2_tid}'),
         ],
         [InlineKeyboardButton(text='⬅️ Чаты', callback_data='adm:chats')],
     ])
