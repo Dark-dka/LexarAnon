@@ -168,8 +168,19 @@ async def on_inline_search(callback: CallbackQuery, bot: Bot):
         await track(partner_tid, 'match_found', session_id=session.id)
         await track(partner_tid, 'chat_started', session_id=session.id)
 
-        await callback.message.answer(texts.PARTNER_FOUND, reply_markup=chat_menu)
-        await bot.send_message(partner_tid, texts.PARTNER_FOUND_SHORT, reply_markup=chat_menu)
+        from bot.services.ranks import rank_label, get_user_chat_count
+        my_count = await get_user_chat_count(telegram_id)
+        partner_count = await get_user_chat_count(partner_tid)
+
+        await callback.message.answer(
+            texts.PARTNER_FOUND.format(partner_rank=rank_label(partner_count)),
+            reply_markup=chat_menu,
+        )
+        await bot.send_message(
+            partner_tid,
+            texts.PARTNER_FOUND_SHORT.format(partner_rank=rank_label(my_count)),
+            reply_markup=chat_menu,
+        )
 
     try:
         await callback.message.delete()
