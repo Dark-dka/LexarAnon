@@ -186,6 +186,7 @@ async def _build_profile_text(user, telegram_id):
     """Build the profile card text."""
     from apps.chat.models import ChatSession
     from django.db.models import Q
+    from bot.services.ranks import get_rank, get_next_rank, rank_label
 
     likes = await sync_to_async(
         user.ratings_received.filter(is_like=True).count
@@ -208,8 +209,19 @@ async def _build_profile_text(user, telegram_id):
     else:
         status_line = texts.PROFILE_STATUS_IDLE
 
+    # Rank info
+    r_label = rank_label(chats_count)
+    nxt = get_next_rank(chats_count)
+    if nxt:
+        left, nxt_emoji, nxt_title = nxt
+        next_rank_line = f'⏭ До {nxt_emoji} {nxt_title}: <b>{left}</b> чатов'
+    else:
+        next_rank_line = '🏆 Максимальный ранг!'
+
     return texts.PROFILE.format(
         display_name=user.display_name,
+        rank_line=r_label,
+        next_rank_line=next_rank_line,
         chats_count=chats_count,
         likes=likes,
         dislikes=dislikes,

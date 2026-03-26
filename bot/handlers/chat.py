@@ -68,6 +68,22 @@ async def stop_chat(message: Message, bot: Bot):
             await bot.send_message(partner_tid, texts.RATE_PROMPT, reply_markup=rate_keyboard(session.id))
         except Exception as e:
             logger.warning(f'Failed to notify partner {partner_tid}: {e}')
+
+        # Check rank up for both
+        from bot.services.ranks import check_rank_up
+        for tid in (telegram_id, partner_tid):
+            rank_up = await check_rank_up(tid)
+            if rank_up:
+                emoji, title = rank_up
+                try:
+                    await bot.send_message(
+                        tid,
+                        f'🎉 <b>Новый ранг!</b>\n\n'
+                        f'Теперь ты: {emoji} <b>{title}</b>\n\n'
+                        f'Продолжай общаться — следующий ранг уже близко!',
+                    )
+                except Exception:
+                    pass
     else:
         await message.answer(texts.NOT_IN_CHAT, reply_markup=main_menu)
 
@@ -107,8 +123,19 @@ async def next_partner(message: Message, bot: Bot):
         await track(telegram_id, 'match_found', session_id=new_session.id)
         await track(new_partner_tid, 'match_found', session_id=new_session.id)
 
-        await message.answer(texts.PARTNER_FOUND, reply_markup=chat_menu)
-        await bot.send_message(new_partner_tid, texts.PARTNER_FOUND_SHORT, reply_markup=chat_menu)
+        from bot.services.ranks import rank_label, get_user_chat_count
+        my_count = await get_user_chat_count(telegram_id)
+        p_count = await get_user_chat_count(new_partner_tid)
+
+        await message.answer(
+            texts.PARTNER_FOUND.format(partner_rank=rank_label(p_count)),
+            reply_markup=chat_menu,
+        )
+        await bot.send_message(
+            new_partner_tid,
+            texts.PARTNER_FOUND_SHORT.format(partner_rank=rank_label(my_count)),
+            reply_markup=chat_menu,
+        )
 
 
 # ── Text relay ───────────────────────────────────────────────────────────
