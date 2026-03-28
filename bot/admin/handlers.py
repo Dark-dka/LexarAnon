@@ -941,14 +941,15 @@ async def on_media_view(callback: CallbackQuery, bot: Bot):
 
     sender = await sync_to_async(lambda: msg.sender.display_name)()
     chat_id = await sync_to_async(lambda: msg.chat_session_id)()
+    import html
     caption = (
         f'🖼 <b>Медиа #{msg.id}</b>\n'
         f'💬 Чат: #{chat_id}\n'
-        f'👤 Отправитель: {sender}\n'
+        f'👤 Отправитель: {html.escape(sender)}\n'
         f'📅 {msg.created_at:%d.%m.%Y %H:%M}'
     )
     if msg.text:
-        caption += f'\n📝 {msg.text[:200]}'
+        caption += f'\n📝 {html.escape(msg.text[:200])}'
 
     admin_chat = callback.message.chat.id
     try:
