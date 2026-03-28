@@ -231,6 +231,14 @@ async def _handle_user_search(message: Message, state: FSMContext):
     if not users:
         await message.answer('Не найдено.', reply_markup=kb.back_button('adm:users'))
         return
+
+    if len(users) == 1:
+        res = await _get_user_card_content(users[0].telegram_id)
+        if res:
+            text, markup = res
+            await message.answer(text, reply_markup=markup)
+            return
+
     lines = []
     for u in users:
         lines.append(f'• <code>{u.telegram_id}</code> — {u.display_name}')
@@ -321,13 +329,10 @@ async def on_users_list(callback: CallbackQuery):
 
 # ── User card ────────────────────────────────────────────────────────────
 
-@router.callback_query(F.data.startswith('adm:user:card:'), AdminFilter())
-async def on_user_card(callback: CallbackQuery):
-    tid = int(callback.data.split(':')[-1])
+async def _get_user_card_content(tid: int):
     data = await services.get_user_card(tid)
     if not data:
-        await callback.answer('Не найден', show_alert=True)
-        return
+        return None
 
     u = data['user']
     act = u.last_activity_at.strftime('%d.%m.%Y %H:%M') if u.last_activity_at else 'нет'
@@ -360,8 +365,18 @@ async def on_user_card(callback: CallbackQuery):
         f'👍 {data["likes"]} / 👎 {data["dislikes"]}\n'
         f'🚨 Жалоб на него: {data["reports_on"]} / от него: {data["reports_by"]}'
     )
+    return text, kb.user_card_kb(u.telegram_id, u.is_blocked)
 
-    await callback.message.edit_text(text, reply_markup=kb.user_card_kb(u.telegram_id, u.is_blocked))
+
+@router.callback_query(F.data.startswith('adm:user:card:'), AdminFilter())
+async def on_user_card(callback: CallbackQuery):
+    tid = int(callback.data.split(':')[-1])
+    res = await _get_user_card_content(tid)
+    if not res:
+        await callback.answer('Не найден', show_alert=True)
+        return
+    text, markup = res
+    await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
 
