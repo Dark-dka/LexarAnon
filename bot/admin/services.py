@@ -149,7 +149,7 @@ async def get_user_card(telegram_id: int) -> dict | None:
     """Get full user card data."""
     def _q():
         try:
-            u = TelegramUser.objects.get(telegram_id=telegram_id)
+            u = TelegramUser.objects.select_related('campaign').get(telegram_id=telegram_id)
         except TelegramUser.DoesNotExist:
             return None
 
