@@ -25,6 +25,7 @@ from bot.config import BOT_TOKEN
 from bot.handlers import start, search, chat, report, fallback
 from bot.admin.handlers import router as admin_router
 from bot.middlewares.throttle import ThrottleMiddleware
+from bot.middlewares.block import BlockMiddleware
 from bot.middlewares.subscription import SubscriptionMiddleware
 
 logging.basicConfig(
@@ -48,7 +49,12 @@ async def main():
     # Register throttle middleware
     dp.message.middleware(ThrottleMiddleware())
 
-    # Register subscription middleware (runs after throttle)
+    # Register block middleware (runs after throttle)
+    block_mw = BlockMiddleware()
+    dp.message.middleware(block_mw)
+    dp.callback_query.middleware(block_mw)
+
+    # Register subscription middleware (runs after block)
     sub_mw = SubscriptionMiddleware()
     dp.message.middleware(sub_mw)
     dp.callback_query.middleware(sub_mw)
